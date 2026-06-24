@@ -14,7 +14,7 @@ import { isSupabaseConfigured, isDemoMode } from '../config/env';
 
 const DEMO_USER: AppUser = {
   id: 'demo-user',
-  email: 'demo@estacionate.app',
+  email: 'demo@trapito.app',
   name: 'Usuario Demo',
   isDemo: true,
 };
@@ -43,7 +43,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 // A dónde vuelve el login. Sin pasar "scheme", makeRedirectUri se adapta al entorno:
 // - En Expo Go usa exp://<host>/--/auth-callback (Expo Go sí lo puede abrir).
-// - En dev build / app nativa usa estacionate://auth-callback (scheme de app.json).
+// - En dev build / app nativa usa trapito://auth-callback (scheme de app.json).
 const redirectTo = makeRedirectUri({ path: 'auth-callback' });
 // eslint-disable-next-line no-console
 console.log('[auth] redirectTo =', redirectTo);

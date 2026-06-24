@@ -1,4 +1,4 @@
-# Estacionate 🅿️
+# Trapito 🅿️
 
 App mobile (React Native + Expo) para **avisar que liberás tu lugar** y **buscar
 estacionamiento cerca**. Por ahora es un **mockup sin backend**: los datos de
@@ -77,9 +77,9 @@ src/
 ### 4. Configurar los Redirect URLs de la app en Supabase
 En **Authentication → URL Configuration → Redirect URLs**, agregá:
 ```
-estacionate://auth-callback
+trapito://auth-callback
 ```
-(Es el deep link que usa la app; coincide con `"scheme": "estacionate"` en `app.json`.)
+(Es el deep link que usa la app; coincide con `"scheme": "trapito"` en `app.json`.)
 
 ### 5. Completar las variables de entorno
 ```bash
@@ -98,7 +98,7 @@ Reiniciá Expo con `npm start -c` (la `-c` limpia la caché para tomar el `.env`
 | Project URL | Supabase → Settings → API | `.env` → `EXPO_PUBLIC_SUPABASE_URL` |
 | anon public key | Supabase → Settings → API | `.env` → `EXPO_PUBLIC_SUPABASE_ANON_KEY` |
 | Client ID / Secret de Google | Google Cloud → Credentials | Supabase → Auth → Provider Google |
-| Redirect `estacionate://auth-callback` | (lo definís vos) | Supabase → Auth → URL Configuration |
+| Redirect `trapito://auth-callback` | (lo definís vos) | Supabase → Auth → URL Configuration |
 | Callback `.../auth/v1/callback` | (lo definís vos) | Google Cloud → Authorized redirect URIs |
 
 ---

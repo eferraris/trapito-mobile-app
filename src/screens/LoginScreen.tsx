@@ -25,13 +25,13 @@ export function LoginScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.hero}>
         <Image
-          source={require('../../assets/icon.png')}
+          source={require('../../assets/trapito.png')}
           style={styles.logo}
           resizeMode="contain"
         />
-        <Text style={styles.title}>Estacionate</Text>
+        <Text style={styles.title}>TRAPITO</Text>
         <Text style={styles.subtitle}>
-          Avisá cuándo liberás tu lugar y encontrá estacionamiento cerca tuyo.
+          Encontrá estacionamiento cerca tuyo.
         </Text>
       </View>
 

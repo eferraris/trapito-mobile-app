@@ -1,23 +1,23 @@
 {
   "expo": {
-    "name": "Estacionate",
-    "slug": "estacionate",
+    "name": "Trapito",
+    "slug": "trapito",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "estacionate",
+    "scheme": "trapito",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.estacionate.app",
+      "bundleIdentifier": "com.trapito.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Estacionate usa tu ubicación para marcar dónde dejás tu auto y para buscar estacionamientos cerca tuyo.",
-        "NSCameraUsageDescription": "Estacionate usa la cámara para que puedas sacar una foto del lugar donde dejaste tu auto.",
-        "NSPhotoLibraryUsageDescription": "Estacionate accede a tus fotos para adjuntar una imagen del lugar donde dejaste tu auto."
+        "NSLocationWhenInUseUsageDescription": "Trapito usa tu ubicación para marcar dónde dejás tu auto y para buscar estacionamientos cerca tuyo.",
+        "NSCameraUsageDescription": "Trapito usa la cámara para que puedas sacar una foto del lugar donde dejaste tu auto.",
+        "NSPhotoLibraryUsageDescription": "Trapito accede a tus fotos para adjuntar una imagen del lugar donde dejaste tu auto."
       }
     },
     "android": {
-      "package": "com.estacionate.app",
+      "package": "com.trapito.app",
       "adaptiveIcon": {
         "backgroundColor": "#0EA5E9",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -39,14 +39,14 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Estacionate usa tu ubicación para marcar dónde dejás tu auto y para buscar estacionamientos cerca tuyo."
+          "locationWhenInUsePermission": "Trapito usa tu ubicación para marcar dónde dejás tu auto y para buscar estacionamientos cerca tuyo."
         }
       ],
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Estacionate usa la cámara para que puedas sacar una foto del lugar donde dejaste tu auto.",
-          "photosPermission": "Estacionate accede a tus fotos para adjuntar una imagen del lugar donde dejaste tu auto."
+          "cameraPermission": "Trapito usa la cámara para que puedas sacar una foto del lugar donde dejaste tu auto.",
+          "photosPermission": "Trapito accede a tus fotos para adjuntar una imagen del lugar donde dejaste tu auto."
         }
       ]
     ]
