@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAuth } from '../context/AuthContext';
 import { useOnboarding } from '../hooks/useOnboarding';
-import { colors } from '../theme/colors';
+import { colors, fontFamily } from '../theme';
 import { LoginScreen } from '../screens/LoginScreen';
 import { OnboardingScreen } from '../screens/OnboardingScreen';
 import { SplashScreen } from '../screens/SplashScreen';
@@ -29,13 +29,19 @@ function AuthGate() {
   );
 }
 
-export function RootNavigator() {
+type Props = {
+  /** true cuando las fuentes Inter terminaron de cargar. */
+  fontsReady?: boolean;
+};
+
+export function RootNavigator({ fontsReady = true }: Props) {
   const { user, loading } = useAuth();
   const [splashDone, setSplashDone] = useState(false);
+  const ready = !loading && fontsReady;
 
   return (
     <View style={{ flex: 1 }}>
-      {!loading && (
+      {ready && (
         <NavigationContainer>
           {user ? (
             <Stack.Navigator
@@ -43,7 +49,7 @@ export function RootNavigator() {
                 headerStyle: { backgroundColor: colors.background },
                 headerShadowVisible: false,
                 headerTintColor: colors.text,
-                headerTitleStyle: { fontWeight: '800' },
+                headerTitleStyle: { fontFamily: fontFamily.extraBold, fontWeight: '800' },
                 contentStyle: { backgroundColor: colors.background },
               }}
             >
@@ -63,7 +69,7 @@ export function RootNavigator() {
       )}
 
       {!splashDone && (
-        <SplashScreen ready={!loading} onFinish={() => setSplashDone(true)} />
+        <SplashScreen ready={ready} onFinish={() => setSplashDone(true)} />
       )}
     </View>
   );

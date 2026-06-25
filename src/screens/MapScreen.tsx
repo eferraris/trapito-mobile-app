@@ -17,7 +17,7 @@ import * as Location from 'expo-location';
 
 import { Crosshair } from '../components/Crosshair';
 import { useAuth } from '../context/AuthContext';
-import { colors } from '../theme/colors';
+import { colors, radius, shadows, spacing, typography } from '../theme';
 import { buildMockParkings, ParkingSpotWithCoords } from '../data/mockParkings';
 import { distanceInMeters, formatDistance, Coords } from '../utils/distance';
 import type { AppScreenProps } from '../navigation/types';
@@ -194,7 +194,7 @@ export function MapScreen({ navigation }: Props) {
               <TextInput
                 style={styles.searchInput}
                 placeholder="Buscar por dirección o quién lo liberó…"
-                placeholderTextColor={colors.textMuted}
+                placeholderTextColor={colors.textTertiary}
                 value={query}
                 onChangeText={setQuery}
                 autoFocus
@@ -237,7 +237,7 @@ function ParkingRow({ spot }: { spot: SpotWithDistance }) {
   const isGarage = spot.type === 'garage';
   return (
     <View style={styles.row}>
-      <View style={[styles.rowIcon, { backgroundColor: isGarage ? '#FEF3C7' : '#DCFCE7' }]}>
+      <View style={[styles.rowIcon, { backgroundColor: isGarage ? colors.chipWarm : colors.alertSoft }]}>
         <Text style={styles.rowEmoji}>{isGarage ? '🏢' : '🚙'}</Text>
       </View>
       <View style={{ flex: 1 }}>
@@ -253,18 +253,12 @@ function ParkingRow({ spot }: { spot: SpotWithDistance }) {
   );
 }
 
-const FLOATING_SHADOW = {
-  shadowColor: '#000',
-  shadowOpacity: 0.18,
-  shadowRadius: 8,
-  shadowOffset: { width: 0, height: 3 },
-  elevation: 5,
-} as const;
+const FLOATING_SHADOW = shadows.floating;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: colors.backgroundAlt },
   centered: { alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { color: colors.textMuted, fontSize: 15 },
+  loadingText: { ...typography.small, color: colors.textMuted },
 
   topBar: {
     position: 'absolute',
@@ -276,40 +270,40 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     flex: 1,
-    height: 48,
-    borderRadius: 24,
+    height: 52,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     gap: 10,
     ...FLOATING_SHADOW,
   },
   searchIcon: { fontSize: 16 },
-  searchPlaceholder: { color: colors.textMuted, fontSize: 15, flex: 1 },
+  searchPlaceholder: { ...typography.small, color: colors.textTertiary, flex: 1 },
 
   profileButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface,
     overflow: 'hidden',
     ...FLOATING_SHADOW,
   },
-  avatar: { width: 48, height: 48, borderRadius: 24 },
+  avatar: { width: 52, height: 52, borderRadius: radius.pill },
   avatarFallback: {
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary,
   },
-  avatarInitial: { color: colors.white, fontSize: 20, fontWeight: '800' },
+  avatarInitial: { color: colors.onPrimary, fontSize: 20, fontWeight: '800' },
 
   locateButton: {
     position: 'absolute',
     right: 16,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 56,
+    height: 56,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
@@ -317,7 +311,7 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
 
-  overlay: { flex: 1, backgroundColor: colors.background },
+  overlay: { flex: 1, backgroundColor: colors.backgroundAlt },
   searchHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -329,54 +323,56 @@ const styles = StyleSheet.create({
   backArrow: { fontSize: 24, color: colors.text },
   searchInput: {
     flex: 1,
-    height: 44,
+    height: spacing.inputHeight,
     backgroundColor: colors.surface,
-    borderRadius: 12,
+    borderRadius: radius.input,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingHorizontal: 14,
+    paddingHorizontal: spacing.inputPaddingH,
     fontSize: 15,
     color: colors.text,
   },
   resultsHeader: {
-    paddingHorizontal: 20,
+    ...typography.small,
+    paddingHorizontal: spacing.screenH,
     paddingBottom: 8,
-    fontSize: 13,
     color: colors.textMuted,
-    fontWeight: '600',
   },
-  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 10 },
+  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 12 },
   empty: {
+    ...typography.body,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
     color: colors.textMuted,
     marginTop: 24,
     paddingHorizontal: 20,
-    lineHeight: 20,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
     backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: radius.cardSm,
+    padding: spacing.cardPadding,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadows.card,
   },
   rowIcon: {
     width: 46,
     height: 46,
-    borderRadius: 12,
+    borderRadius: radius.input,
     alignItems: 'center',
     justifyContent: 'center',
   },
   rowEmoji: { fontSize: 22 },
-  rowTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
-  rowSub: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  rowTitle: { ...typography.titleMd, fontSize: 15, lineHeight: 20, color: colors.text },
+  rowSub: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   distancePill: {
-    backgroundColor: colors.background,
-    borderRadius: 10,
-    paddingHorizontal: 10,
+    backgroundColor: colors.surfaceWarm,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
     paddingVertical: 6,
   },
   distanceText: { fontSize: 13, fontWeight: '700', color: colors.primary },

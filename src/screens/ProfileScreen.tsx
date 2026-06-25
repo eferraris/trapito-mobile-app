@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
-import { colors } from '../theme/colors';
+import { colors, fontFamily, spacing, typography } from '../theme';
 import type { AppScreenProps } from '../navigation/types';
 
 type Props = AppScreenProps<'Profile'>;
@@ -55,14 +55,14 @@ export function ProfileScreen(_props: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgroundAlt,
     justifyContent: 'space-between',
   },
   header: {
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.titleToDesc,
     paddingTop: 40,
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.screenH,
   },
   avatar: { width: 96, height: 96, borderRadius: 48 },
   avatarFallback: {
@@ -70,8 +70,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.primary,
   },
-  avatarInitial: { color: colors.white, fontSize: 40, fontWeight: '800' },
-  name: { fontSize: 24, fontWeight: '800', color: colors.text },
-  email: { fontSize: 15, color: colors.textMuted },
-  actions: { padding: 24 },
+  avatarInitial: {
+    color: colors.onPrimary,
+    fontFamily: fontFamily.extraBold,
+    fontSize: 40,
+    fontWeight: '800',
+  },
+  name: { ...typography.titleLg, fontSize: 24, lineHeight: 30, color: colors.text },
+  email: { ...typography.small, color: colors.textMuted },
+  actions: { padding: spacing.screenH },
 });

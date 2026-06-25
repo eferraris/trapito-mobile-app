@@ -7,14 +7,22 @@ import {
   ViewStyle,
 } from 'react-native';
 
-import { colors } from '../theme/colors';
+import { colors, radius, shadows, spacing, typography } from '../theme';
+
+type Variant = 'primary' | 'secondary' | 'danger';
 
 type Props = {
   title: string;
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: 'primary' | 'outline' | 'danger';
+  /**
+   * `primary`: CTA rojo coral (alto, con sombra roja). `secondary`: acción suave
+   * tipo "Ya tengo cuenta" (transparente, texto gris). `danger`: acción
+   * destructiva (rojo error).
+   */
+  variant?: Variant;
+  /** Mantengo `outline` como alias de `secondary` por compatibilidad. */
   icon?: string;
   style?: ViewStyle;
 };
@@ -28,10 +36,34 @@ export function PrimaryButton({
   icon,
   style,
 }: Props) {
-  const isOutline = variant === 'outline';
-  const bg =
-    variant === 'danger' ? colors.danger : isOutline ? 'transparent' : colors.primary;
-  const textColor = isOutline ? colors.primary : colors.white;
+  const isSecondary = variant === 'secondary';
+
+  if (isSecondary) {
+    return (
+      <Pressable
+        onPress={onPress}
+        disabled={disabled || loading}
+        hitSlop={8}
+        style={({ pressed }) => [
+          styles.secondary,
+          { opacity: disabled ? 0.5 : pressed ? 0.6 : 1 },
+          style,
+        ]}
+      >
+        {loading ? (
+          <ActivityIndicator color={colors.textMuted} />
+        ) : (
+          <Text style={styles.secondaryText}>
+            {icon ? `${icon}  ` : ''}
+            {title}
+          </Text>
+        )}
+      </Pressable>
+    );
+  }
+
+  const isDanger = variant === 'danger';
+  const bg = disabled ? colors.primaryDisabled : isDanger ? colors.danger : colors.primary;
 
   return (
     <Pressable
@@ -39,15 +71,17 @@ export function PrimaryButton({
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.button,
-        { backgroundColor: bg, opacity: disabled ? 0.5 : pressed ? 0.85 : 1 },
-        isOutline && styles.outline,
+        // La sombra roja solo tiene sentido sobre el rojo y cuando está activo.
+        !disabled && shadows.button,
+        { backgroundColor: bg, opacity: pressed && !disabled ? 0.9 : 1 },
+        pressed && !disabled && styles.pressed,
         style,
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={textColor} />
+        <ActivityIndicator color={colors.onPrimary} />
       ) : (
-        <Text style={[styles.text, { color: textColor }]}>
+        <Text style={styles.text}>
           {icon ? `${icon}  ` : ''}
           {title}
         </Text>
@@ -58,18 +92,26 @@ export function PrimaryButton({
 
 const styles = StyleSheet.create({
   button: {
-    height: 54,
-    borderRadius: 14,
+    height: spacing.buttonHeight,
+    borderRadius: radius.button,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.buttonPaddingH,
   },
-  outline: {
-    borderWidth: 2,
-    borderColor: colors.primary,
-  },
+  pressed: { transform: [{ scale: 0.99 }] },
   text: {
-    fontSize: 16,
-    fontWeight: '700',
+    ...typography.button,
+    color: colors.onPrimary,
+  },
+  secondary: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.buttonPaddingH,
+  },
+  secondaryText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: colors.textMuted,
   },
 });

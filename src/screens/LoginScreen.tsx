@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
-import { colors } from '../theme/colors';
+import { colors, spacing, typography } from '../theme';
 
 export function LoginScreen() {
   const { signInWithGoogle } = useAuth();
@@ -29,7 +29,7 @@ export function LoginScreen() {
           style={styles.logo}
           resizeMode="contain"
         />
-        <Text style={styles.title}>TRAPITO</Text>
+        <Text style={styles.title}>trapito</Text>
         <Text style={styles.subtitle}>
           Encontrá estacionamiento cerca tuyo.
         </Text>
@@ -54,39 +54,40 @@ export function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgroundAlt,
     justifyContent: 'space-between',
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.screenH,
   },
   hero: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: spacing.titleToDesc,
   },
   logo: {
-    width: 140,
-    height: 140,
+    width: 180,
+    height: 180,
+    // El PNG tiene aire propio abajo; lo compensamos con margen negativo para
+    // acercar el isotipo al nombre sin tocar la separación título↔subtítulo.
+    marginBottom: -25,
   },
   title: {
-    fontSize: 34,
-    fontWeight: '800',
+    ...typography.titleLg,
     color: colors.text,
   },
   subtitle: {
-    fontSize: 16,
+    ...typography.body,
     color: colors.textMuted,
     textAlign: 'center',
     paddingHorizontal: 12,
-    lineHeight: 22,
   },
   actions: {
-    paddingBottom: 24,
+    paddingBottom: spacing.screenH,
   },
   terms: {
+    ...typography.small,
     marginTop: 20,
-    fontSize: 12,
-    color: colors.textMuted,
+    color: colors.textTertiary,
     textAlign: 'center',
   },
 });

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Image, StyleSheet, Text } from 'react-native';
 
-import { colors } from '../theme/colors';
+import { colors, fontFamily } from '../theme';
 
 type Props = {
   /** true cuando la app ya está lista para mostrarse (sesión resuelta). */
@@ -11,7 +11,7 @@ type Props = {
 };
 
 // El splash se ve al menos este tiempo, aunque la sesión cargue antes.
-const MIN_SPLASH_MS = 2000;
+const MIN_SPLASH_MS = 3000;
 const FADE_MS = 700;
 
 /**
@@ -44,7 +44,7 @@ export function SplashScreen({ ready, onFinish }: Props) {
         style={styles.logo}
         resizeMode="contain"
       />
-      <Text style={styles.name}>TRAPITO</Text>
+      <Text style={styles.name}>trapito</Text>
     </Animated.View>
   );
 }
@@ -56,13 +56,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
   },
   logo: { width: 220, height: 220 },
   name: {
+    fontFamily: fontFamily.extraBold,
     fontSize: 44,
     fontWeight: '800',
-    color: '#000000',
-    letterSpacing: 1,
+    color: colors.text,
+    letterSpacing: -1.2,
+    marginTop: -40,
   },
 });

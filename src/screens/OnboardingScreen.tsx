@@ -1,70 +1,144 @@
-import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import {
+  Dimensions,
+  FlatList,
+  Image,
+  ListRenderItemInfo,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '../components/PrimaryButton';
-import { colors } from '../theme/colors';
+import { colors, fontFamily, radius, shadows, spacing, typography } from '../theme';
 
 type Props = {
   /** Cierra el onboarding (lo marca como visto) y deja el login atrás. */
   onClose: () => void;
 };
 
-const FEATURES = [
+type Slide = {
+  key: string;
+  image: ReturnType<typeof require>;
+  title: string;
+  subtitle: string;
+  button: string;
+};
+
+const SLIDES: Slide[] = [
   {
-    emoji: '🗺️',
-    title: 'Estacionamientos cerca tuyo',
-    desc: 'Mirá en el mapa los lugares libres a la redonda de donde estás.',
+    key: 'mapa',
+    image: require('../../assets/mapa.png'),
+    title: 'Encontrá dónde\nestacionar',
+    subtitle: 'Buscá espacios disponibles cerca tuyo\ny evitá perder tiempo dando vueltas.',
+    button: 'Siguiente',
   },
   {
-    emoji: '🔎',
-    title: 'Buscá rápido',
-    desc: 'Abrí el buscador y encontrá el lugar más cercano en segundos.',
+    key: 'cochera_disponible',
+    image: require('../../assets/cochera_disponible.png'),
+    title: 'Reservá antes\nde llegar',
+    subtitle: 'Elegí un lugar disponible y asegurá\ntu espacio antes de salir.',
+    button: 'Siguiente',
   },
   {
-    emoji: '📍',
-    title: 'Siempre ubicado',
-    desc: 'Centrá el mapa en tu ubicación con un toque.',
+    key: 'espacio_publicado',
+    image: require('../../assets/espacio_publicado.png'),
+    title: 'Publicá tu espacio',
+    subtitle:
+      'Si tenés garage, cochera o un lugar\ndisponible, podés alquilarlo y\ngenerar ingresos.',
+    button: 'Empezar',
   },
 ];
 
+const { width: SCREEN_W } = Dimensions.get('window');
+
 /**
- * Pantalla de bienvenida (primera apertura). Cuenta de qué se trata Trapito.
- * Se renderiza como overlay full-screen sobre el login; al cerrarse, aparece el login.
+ * Pantalla de bienvenida (primera apertura). Carrusel de 3 pasos que cuenta de
+ * qué se trata Trapito. Se renderiza como overlay full-screen sobre el login;
+ * al completarse o saltearse, aparece el login.
  */
 export function OnboardingScreen({ onClose }: Props) {
+  const listRef = useRef<FlatList<Slide>>(null);
+  const [index, setIndex] = useState(0);
+
+  const isLast = index === SLIDES.length - 1;
+
+  const goNext = () => {
+    if (isLast) {
+      onClose();
+      return;
+    }
+    listRef.current?.scrollToIndex({ index: index + 1, animated: true });
+  };
+
+  const onMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const next = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+    if (next !== index) setIndex(next);
+  };
+
+  const renderItem = ({ item }: ListRenderItemInfo<Slide>) => (
+    <View style={styles.slide}>
+      <View style={styles.imageWrap}>
+        <Image source={item.image} style={styles.image} resizeMode="contain" />
+      </View>
+      <View style={styles.texts}>
+        <Text style={styles.title}>{item.title}</Text>
+        <Text style={styles.subtitle}>{item.subtitle}</Text>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
-        <Text style={styles.closeIcon}>✕</Text>
+      <Pressable
+        onPress={onClose}
+        hitSlop={10}
+        style={[styles.skip, isLast && styles.skipHidden]}
+        disabled={isLast}
+      >
+        <Text style={styles.skipText}>Omitir</Text>
       </Pressable>
 
-      <View style={styles.hero}>
+      <View style={styles.brand}>
         <Image
           source={require('../../assets/trapito.png')}
-          style={styles.logo}
+          style={styles.brandLogo}
           resizeMode="contain"
         />
-        <Text style={styles.title}>Bienvenido a TRAPITO</Text>
-        <Text style={styles.subtitle}>
-          La forma más fácil de encontrar estacionamiento cerca tuyo.
-        </Text>
+        <Text style={styles.brandName}>trapito</Text>
       </View>
 
-      <View style={styles.features}>
-        {FEATURES.map((f) => (
-          <View key={f.title} style={styles.feature}>
-            <Text style={styles.featureEmoji}>{f.emoji}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.featureTitle}>{f.title}</Text>
-              <Text style={styles.featureDesc}>{f.desc}</Text>
-            </View>
-          </View>
+      <FlatList
+        ref={listRef}
+        data={SLIDES}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.key}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onMomentumEnd}
+        getItemLayout={(_, i) => ({
+          length: SCREEN_W,
+          offset: SCREEN_W * i,
+          index: i,
+        })}
+      />
+
+      <View style={styles.dots}>
+        {SLIDES.map((s, i) => (
+          <View key={s.key} style={[styles.dot, i === index && styles.dotActive]} />
         ))}
       </View>
 
       <View style={styles.actions}>
-        <PrimaryButton title="Empezar" icon="🚀" onPress={onClose} />
+        <PrimaryButton title={SLIDES[index].button} onPress={goNext} />
+        {isLast && (
+          <PrimaryButton title="Ya tengo cuenta" variant="secondary" onPress={onClose} />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -73,44 +147,90 @@ export function OnboardingScreen({ onClose }: Props) {
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.white,
-    paddingHorizontal: 24,
+    backgroundColor: colors.backgroundAlt,
   },
-  closeButton: {
+  skip: {
     position: 'absolute',
     top: 52,
-    right: 20,
+    right: spacing.screenH,
     zIndex: 1,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    minHeight: 32,
+    justifyContent: 'center',
+  },
+  skipHidden: { opacity: 0 },
+  skipText: { ...typography.skip, color: colors.textMuted },
+  brand: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
+    paddingTop: spacing.block,
   },
-  closeIcon: { fontSize: 18, color: colors.textMuted, fontWeight: '700' },
-  hero: {
+  brandLogo: { width: 90, height: 90, marginRight: -5 },
+  brandName: {
+    fontFamily: fontFamily.extraBold,
+    fontWeight: '800',
+    fontSize: 34,
+    color: colors.text,
+    letterSpacing: -0.8,
+  },
+  slide: {
+    width: SCREEN_W,
+    flex: 1,
+    paddingHorizontal: spacing.screenH,
+    justifyContent: 'center',
+  },
+  imageWrap: {
+    width: '100%',
+    aspectRatio: 1,
+    alignSelf: 'center',
+    marginTop: spacing.block,
+    borderRadius: radius.illustration,
+    borderWidth: 4,
+    borderColor: colors.white,
+    backgroundColor: colors.white,
+    overflow: 'hidden',
+    ...shadows.illustration,
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 22 },
+    elevation: 10,
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radius.illustration - 4,
+  },
+  texts: {
     alignItems: 'center',
-    paddingTop: 40,
-    gap: 10,
+    gap: spacing.titleToDesc,
+    paddingTop: spacing.block,
   },
-  logo: { width: 120, height: 120, marginBottom: 4 },
-  title: { fontSize: 28, fontWeight: '800', color: colors.text, textAlign: 'center' },
+  title: { ...typography.titleLg, color: colors.text, textAlign: 'center' },
   subtitle: {
-    fontSize: 16,
+    ...typography.body,
     color: colors.textMuted,
     textAlign: 'center',
-    lineHeight: 22,
-    paddingHorizontal: 8,
   },
-  features: {
-    flex: 1,
+  dots: {
+    flexDirection: 'row',
     justifyContent: 'center',
-    gap: 22,
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: spacing.descToDots,
   },
-  feature: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  featureEmoji: { fontSize: 30 },
-  featureTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
-  featureDesc: { fontSize: 14, color: colors.textMuted, marginTop: 2, lineHeight: 20 },
-  actions: { paddingBottom: 24 },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.border,
+  },
+  dotActive: {
+    width: 22,
+    backgroundColor: colors.primary,
+  },
+  actions: {
+    paddingHorizontal: spacing.screenH,
+    paddingBottom: spacing.screenH,
+    gap: 8,
+  },
 });

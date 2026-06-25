@@ -19,7 +19,7 @@
     "android": {
       "package": "com.trapito.app",
       "adaptiveIcon": {
-        "backgroundColor": "#0EA5E9",
+        "backgroundColor": "#FF2F2F",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -35,6 +35,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "expo-font",
       "expo-web-browser",
       [
         "expo-location",
