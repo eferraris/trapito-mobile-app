@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   Platform,
@@ -12,45 +13,139 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import MapView, { Circle, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 
 import { Crosshair } from '../components/Crosshair';
+import { SearchPulse } from '../components/SearchPulse';
+import { MeterSlider } from '../components/MeterSlider';
+import { MapPin, PIN } from '../components/MapPin';
+import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
 import { colors, radius, shadows, spacing, typography } from '../theme';
-import { buildMockParkings, ParkingSpotWithCoords } from '../data/mockParkings';
+import { buildMockParkings } from '../data/mockParkings';
 import { distanceInMeters, formatDistance, Coords } from '../utils/distance';
+import {
+  getPlaceDetails,
+  newSessionToken,
+  PlacePrediction,
+  searchPlaces,
+} from '../lib/places';
+import {
+  addRecentSearch,
+  loadRecentSearches,
+  RecentSearch,
+} from '../lib/recentSearches';
 import type { AppScreenProps } from '../navigation/types';
 
 // En Android usamos Google Maps; en iOS dejamos Apple Maps.
 const MAP_PROVIDER = Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined;
 
 type Props = AppScreenProps<'Map'>;
-type SpotWithDistance = ParkingSpotWithCoords & { distance: number };
 
-const RADIUS_METERS = 500;
+/** Paso del flujo de búsqueda. */
+type Step = 'idle' | 'place' | 'range' | 'mode' | 'garages' | 'trapito' | 'broadcasting';
+
+type Destination = { coords: Coords; label: string };
+
 const FALLBACK: Coords = { latitude: -34.6037, longitude: -58.3816 }; // Obelisco, BA
+const GARAGE_BLUE = '#2563EB';
+
+// Caminata: rango del slider, en metros.
+const WALK_MIN_M = 100;
+const WALK_MAX_M = 1500;
+const WALK_STEP_M = 50;
+const DEFAULT_WALK_M = 400;
+
+// Trapito: tiempo de estadía y sugerencia de precio.
+const HOUR_OPTIONS = [1, 2, 4, 8];
+const BASE_PER_HOUR = 1500; // ARS por hora (mock) para la sugerencia
+const PRICE_STEP = 500;
+const DEFAULT_HOURS = 2;
+
+// El círculo de caminata ocupa esta fracción del ancho de pantalla al encuadrar.
+const CIRCLE_FRACTION = 0.34;
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const PULSE_PIXEL_RADIUS = CIRCLE_FRACTION * SCREEN_W;
+
+// El panel inferior tapa parte del mapa. Con mapPadding.bottom el mapa proyecta
+// su centro en el centro del área visible (sobre el panel), así el pin queda
+// centrado ahí y la coordenada del centro es exacta (sin aproximar px→grados).
+const MAP_PADDING_BOTTOM = 300;
+const VISIBLE_SHIFT_PX = MAP_PADDING_BOTTOM / 2; // px que sube el centro visible
+
+const METERS_PER_DEG_LAT = 111_320;
+
+/** Encuadra el mapa para que un círculo de `meters` ocupe ~CIRCLE_FRACTION del ancho. */
+function regionForRadius(c: Coords, meters: number): Region {
+  const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos((c.latitude * Math.PI) / 180);
+  // ancho del mapa en metros para que el radio sea CIRCLE_FRACTION * ancho
+  const mapWidthMeters = meters / CIRCLE_FRACTION;
+  const longitudeDelta = mapWidthMeters / metersPerDegLon;
+  const latitudeDelta = longitudeDelta * (SCREEN_H / SCREEN_W);
+  // Sin desplazar la latitud: el mapPadding ya centra en el área visible.
+  return { latitude: c.latitude, longitude: c.longitude, latitudeDelta, longitudeDelta };
+}
 
 function toRegion(c: Coords, delta = 0.012): Region {
-  return {
-    latitude: c.latitude,
-    longitude: c.longitude,
-    latitudeDelta: delta,
-    longitudeDelta: delta,
-  };
+  return { latitude: c.latitude, longitude: c.longitude, latitudeDelta: delta, longitudeDelta: delta };
+}
+
+/** Formatea un número como pesos con separador de miles ("1.500"). */
+function formatArs(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** Arma una dirección legible a partir del resultado de reverseGeocodeAsync. */
+function formatGeocode(a?: Location.LocationGeocodedAddress): string {
+  if (!a) return 'Punto en el mapa';
+  const line = [a.street ?? a.name, a.streetNumber].filter(Boolean).join(' ');
+  const area = a.city ?? a.subregion ?? a.region;
+  return [line, area].filter(Boolean).join(', ') || 'Punto en el mapa';
 }
 
 export function MapScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const mapRef = useRef<MapView>(null);
+
   const [loading, setLoading] = useState(true);
   const [center, setCenter] = useState<Coords | null>(null);
+
+  // --- Flujo de búsqueda ---
+  const [step, setStep] = useState<Step>('idle');
+  const [destination, setDestination] = useState<Destination | null>(null);
+  const [walkMeters, setWalkMeters] = useState(DEFAULT_WALK_M);
+  const [hours, setHours] = useState(DEFAULT_HOURS);
+  const [price, setPrice] = useState(BASE_PER_HOUR * DEFAULT_HOURS);
+
+  // --- Buscador de destino (Places) ---
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [predictions, setPredictions] = useState<PlacePrediction[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [recents, setRecents] = useState<RecentSearch[]>([]);
+  const [moving, setMoving] = useState(false);
+  const sessionToken = useRef<string>('');
+
+  // --- Fijar el punto exacto (step 'place') ---
+  const [pinCoords, setPinCoords] = useState<Coords | null>(null);
+  const [pinAddress, setPinAddress] = useState<string | null>(null);
+  const [geocoding, setGeocoding] = useState(false);
+  // true solo cuando el usuario movió el mapa con el dedo (no en animaciones por código).
+  const userMoved = useRef(false);
+
+  const isLocked = step === 'broadcasting';
+
+  const animateToRegionAfterRender = (region: Region, duration: number) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        mapRef.current?.animateToRegion(region, duration);
+      });
+    });
+  };
 
   // Pide la ubicación y, si `animate`, mueve la cámara hacia ella.
-  // `animate` también distingue la carga inicial (silenciosa) del botón de centrar.
   const fetchLocation = async (animate = false) => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -64,9 +159,7 @@ export function MapScreen({ navigation }: Props) {
         }
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       setCenter(coords);
       if (animate) mapRef.current?.animateToRegion(toRegion(coords), 600);
@@ -79,34 +172,156 @@ export function MapScreen({ navigation }: Props) {
 
   useEffect(() => {
     fetchLocation();
+    loadRecentSearches().then(setRecents);
   }, []);
 
-  const nearby: SpotWithDistance[] = useMemo(() => {
-    if (!center) return [];
-    return buildMockParkings(center)
-      .map((spot) => ({ ...spot, distance: distanceInMeters(center, spot.coords) }))
-      .filter((spot) => spot.distance <= RADIUS_METERS)
-      .sort((a, b) => a.distance - b.distance);
-  }, [center]);
+  // Autocompletado con debounce (300 ms) mientras se escribe el destino.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const q = query.trim();
+    if (q.length < 3) {
+      setPredictions([]);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const results = await searchPlaces(q, sessionToken.current, center);
+      setPredictions(results);
+      setSearching(false);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query, searchOpen, center]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return nearby;
-    return nearby.filter(
-      (s) =>
-        s.address.toLowerCase().includes(q) || s.reportedBy.toLowerCase().includes(q)
-    );
-  }, [nearby, query]);
+  // Garages privados dentro del radio de caminata, alrededor del destino.
+  const garages = useMemo(() => {
+    if (!destination) return [];
+    return buildMockParkings(destination.coords)
+      .filter((s) => s.type === 'garage')
+      .map((s) => ({ ...s, distance: distanceInMeters(destination.coords, s.coords) }))
+      .filter((s) => s.distance <= walkMeters)
+      .sort((a, b) => a.distance - b.distance);
+  }, [destination, walkMeters]);
+
+  const openSearch = () => {
+    sessionToken.current = newSessionToken();
+    setQuery('');
+    setPredictions([]);
+    setSearchOpen(true);
+  };
 
   const closeSearch = () => {
     setSearchOpen(false);
     setQuery('');
+    setPredictions([]);
   };
 
-  // Centra el mapa en un estacionamiento elegido de la lista y cierra el buscador.
-  const goToSpot = (spot: SpotWithDistance) => {
+  // Elige un destino del autocompletado: resuelve coords y arranca el flujo.
+  const pickPrediction = async (p: PlacePrediction) => {
+    setSearching(true);
+    const details = await getPlaceDetails(p.placeId, sessionToken.current);
+    setSearching(false);
+    if (!details) {
+      Alert.alert('Ups', 'No pudimos ubicar ese lugar. Probá con otro.');
+      return;
+    }
     closeSearch();
-    mapRef.current?.animateToRegion(toRegion(spot.coords, 0.006), 600);
+    startFlowAt(details);
+    addRecentSearch(details).then(setRecents);
+  };
+
+  // Arranca el flujo en un destino: abre el paso de "fijar el punto" centrado
+  // en el lugar elegido, para que el usuario lo ajuste moviendo el mapa.
+  const startFlowAt = (dest: Destination) => {
+    setDestination(null);
+    setPinCoords(dest.coords);
+    setPinAddress(dest.label);
+    userMoved.current = false;
+    setStep('place');
+    animateToRegionAfterRender(toRegion(dest.coords, 0.005), 700);
+  };
+
+  // Dirección del punto bajo el pin (centro del mapa). Usa el geocoder del SO.
+  const reverseGeocode = async (c: Coords) => {
+    setGeocoding(true);
+    try {
+      const [res] = await Location.reverseGeocodeAsync(c);
+      setPinAddress(formatGeocode(res));
+    } catch {
+      setPinAddress(null);
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const handleRegionChangeComplete = (region: Region) => {
+    setMoving(false);
+    // Solo recalculamos el punto/dirección si el movimiento lo hizo el usuario.
+    // En animaciones por código (entrar al paso, volver atrás) conservamos el
+    // punto exacto ya elegido, así la dirección no cambia al ir y volver.
+    if (step === 'place' && userMoved.current) {
+      userMoved.current = false;
+      // Con mapPadding, el centro de la región ES el punto bajo el pin (exacto).
+      const c = { latitude: region.latitude, longitude: region.longitude };
+      setPinCoords(c);
+      reverseGeocode(c);
+    }
+  };
+
+  // Confirma el punto fijado y pasa al rango de caminata.
+  const confirmPlace = () => {
+    if (!pinCoords) return;
+    setDestination({ coords: pinCoords, label: pinAddress ?? 'Punto en el mapa' });
+    setWalkMeters(DEFAULT_WALK_M);
+    setStep('range');
+    mapRef.current?.animateToRegion(regionForRadius(pinCoords, DEFAULT_WALK_M), 600);
+  };
+
+  // Vuelve del rango a la selección fina del punto (no a idle).
+  const backToPlace = () => {
+    if (!destination) return resetSearch();
+    setPinCoords(destination.coords);
+    setPinAddress(destination.label);
+    setDestination(null);
+    userMoved.current = false;
+    setStep('place');
+    mapRef.current?.animateToRegion(toRegion(destination.coords, 0.005), 500);
+  };
+
+  const pickRecent = (r: RecentSearch) => {
+    closeSearch();
+    startFlowAt(r);
+    addRecentSearch(r).then(setRecents);
+  };
+
+  // Reencuadra el mapa al soltar el slider (en vivo solo crece el círculo).
+  const reframeWalk = (meters: number) => {
+    if (destination) {
+      mapRef.current?.animateToRegion(regionForRadius(destination.coords, meters), 300);
+    }
+  };
+
+  const chooseHours = (h: number) => {
+    setHours(h);
+    setPrice(BASE_PER_HOUR * h); // re-sugerimos el precio al cambiar el tiempo
+  };
+
+  const startBroadcasting = () => {
+    if (destination) {
+      mapRef.current?.animateToRegion(regionForRadius(destination.coords, walkMeters), 500);
+    }
+    setStep('broadcasting');
+  };
+
+  // Vuelve al estado inicial (cancelar / cerrar el flujo).
+  const resetSearch = () => {
+    setStep('idle');
+    setDestination(null);
+    setPinCoords(null);
+    setPinAddress(null);
+    setWalkMeters(DEFAULT_WALK_M);
+    setHours(DEFAULT_HOURS);
+    setPrice(BASE_PER_HOUR * DEFAULT_HOURS);
+    if (center) mapRef.current?.animateToRegion(toRegion(center), 500);
   };
 
   if (loading || !center) {
@@ -119,7 +334,6 @@ export function MapScreen({ navigation }: Props) {
   }
 
   const initial = (user?.name ?? user?.email ?? '?').trim().charAt(0).toUpperCase();
-
   const avatar = user?.avatarUrl ? (
     <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
   ) : (
@@ -127,6 +341,9 @@ export function MapScreen({ navigation }: Props) {
       <Text style={styles.avatarInitial}>{initial}</Text>
     </View>
   );
+
+  // El círculo se oculta mientras el mapa se mueve y reaparece al soltar.
+  const showCircle = !!destination && step !== 'idle' && !moving;
 
   return (
     <View style={styles.container}>
@@ -137,53 +354,252 @@ export function MapScreen({ navigation }: Props) {
         initialRegion={toRegion(center)}
         showsUserLocation
         showsMyLocationButton={false}
+        mapPadding={{ top: 0, right: 0, left: 0, bottom: step === 'idle' ? 0 : MAP_PADDING_BOTTOM }}
+        scrollEnabled={!isLocked}
+        zoomEnabled={!isLocked}
+        rotateEnabled={!isLocked}
+        pitchEnabled={!isLocked}
+        onPanDrag={() => {
+          userMoved.current = true;
+        }}
+        onRegionChange={() => setMoving(true)}
+        onRegionChangeComplete={handleRegionChangeComplete}
       >
-        {nearby.map((spot) => (
-          <Marker
-            key={spot.id}
-            coordinate={spot.coords}
-            title={spot.address}
-            description={`${spot.type === 'garage' ? 'Cochera' : 'Lugar en la calle'} · ${formatDistance(
-              spot.distance
-            )}`}
-            pinColor={spot.type === 'garage' ? colors.accent : colors.success}
+        {showCircle && destination && (
+          <Circle
+            center={destination.coords}
+            radius={walkMeters}
+            strokeColor={colors.primary}
+            strokeWidth={2}
+            fillColor="rgba(255,47,47,0.08)"
           />
-        ))}
+        )}
+
+        {/* Pin del destino (en broadcasting lo dibuja SearchPulse). */}
+        {destination && step !== 'broadcasting' && (
+          <FrozenMarker coordinate={destination.coords} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.destPin}>
+              <View style={styles.destPinDot} />
+            </View>
+          </FrozenMarker>
+        )}
+
+        {/* Garages privados: "E" blanca sobre fondo azul. */}
+        {step === 'garages' &&
+          garages.map((g) => (
+            <FrozenMarker
+              key={g.id}
+              coordinate={g.coords}
+              anchor={{ x: 0.5, y: 0.5 }}
+              title={g.address}
+              description={`Garage privado · ${formatDistance(g.distance)}`}
+            >
+              <View style={styles.garageBadge}>
+                <Text style={styles.garageE}>E</Text>
+              </View>
+            </FrozenMarker>
+          ))}
       </MapView>
 
-      {/* Barra superior: buscador + perfil */}
-      <View style={[styles.topBar, { top: insets.top + 12 }]}>
-        <Pressable
-          onPress={() => setSearchOpen(true)}
-          style={({ pressed }) => [styles.searchBar, pressed && styles.pressed]}
-        >
-          <Text style={styles.searchIcon}>🔍</Text>
-          <Text style={styles.searchPlaceholder}>Buscar estacionamientos cerca</Text>
-        </Pressable>
+      {/* Pin fijo en el centro visible: el mapa se mueve debajo para fijar el punto. */}
+      {step === 'place' && (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <View
+            style={{
+              position: 'absolute',
+              left: SCREEN_W / 2 - PIN.width / 2,
+              top: SCREEN_H / 2 - VISIBLE_SHIFT_PX - PIN.tipY,
+            }}
+          >
+            <MapPin />
+          </View>
+        </View>
+      )}
 
+      {/* Animación de búsqueda activa (alineada con el destino, sobre el panel). */}
+      {step === 'broadcasting' && (
+        <SearchPulse pixelRadius={PULSE_PIXEL_RADIUS} offsetY={VISIBLE_SHIFT_PX} />
+      )}
+
+      {/* Barra superior: solo en idle. */}
+      {step === 'idle' && (
+        <View style={[styles.topBar, { top: insets.top + 12 }]}>
+          <Pressable
+            onPress={openSearch}
+            style={({ pressed }) => [styles.searchBar, pressed && styles.pressed]}
+          >
+            <Text style={styles.searchIcon}>🔍</Text>
+            <Text style={styles.searchPlaceholder}>¿A dónde vamos?</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => navigation.navigate('Profile')}
+            style={({ pressed }) => [styles.profileButton, pressed && styles.pressed]}
+            hitSlop={8}
+          >
+            {avatar}
+          </Pressable>
+        </View>
+      )}
+
+      {/* Botón flotante: centrar en mi ubicación (oculto en broadcasting). */}
+      {!isLocked && (
         <Pressable
-          onPress={() => navigation.navigate('Profile')}
-          style={({ pressed }) => [styles.profileButton, pressed && styles.pressed]}
+          onPress={() => fetchLocation(true)}
+          style={({ pressed }) => [
+            styles.locateButton,
+            { bottom: insets.bottom + bottomOffsetFor(step) },
+            pressed && styles.pressed,
+          ]}
           hitSlop={8}
         >
-          {avatar}
+          <Crosshair size={26} />
         </Pressable>
-      </View>
+      )}
 
-      {/* Botón flotante: centrar en mi ubicación */}
-      <Pressable
-        onPress={() => fetchLocation(true)}
-        style={({ pressed }) => [
-          styles.locateButton,
-          { bottom: insets.bottom + 24 },
-          pressed && styles.pressed,
-        ]}
-        hitSlop={8}
-      >
-        <Crosshair size={26} />
-      </Pressable>
+      {/* --- Bottom sheets por paso --- */}
+      {step === 'place' && (
+        <Sheet onBack={resetSearch} insetBottom={insets.bottom}>
+          <Text style={styles.sheetEyebrow}>Elegí tu destino</Text>
+          <Text style={styles.placeAddress} numberOfLines={2}>
+            {moving || geocoding ? 'Ajustando ubicación…' : pinAddress ?? 'Sin dirección'}
+          </Text>
+          <Text style={styles.sheetBody}>Mové el mapa para fijar el punto exacto.</Text>
+          <PrimaryButton title="Confirmar" onPress={confirmPlace} disabled={moving || !pinCoords} />
+        </Sheet>
+      )}
 
-      {/* Buscador abierto: lista de estacionamientos cercanos */}
+      {step === 'range' && destination && (
+        <Sheet onBack={backToPlace} insetBottom={insets.bottom}>
+          <Text style={styles.sheetEyebrow}>{destination.label}</Text>
+          <Text style={styles.sheetTitle}>¿Cuánto estás{'\n'}dispuesto a caminar?</Text>
+          <View style={styles.walkValueRow}>
+            <Text style={styles.walkValue}>{formatDistance(walkMeters)}</Text>
+            <Text style={styles.walkValueSub}>a la redonda</Text>
+          </View>
+          <MeterSlider
+            value={walkMeters}
+            min={WALK_MIN_M}
+            max={WALK_MAX_M}
+            step={WALK_STEP_M}
+            onChange={setWalkMeters}
+            onComplete={reframeWalk}
+          />
+          <View style={styles.walkRangeLabels}>
+            <Text style={styles.walkRangeText}>{formatDistance(WALK_MIN_M)}</Text>
+            <Text style={styles.walkRangeText}>{formatDistance(WALK_MAX_M)}</Text>
+          </View>
+          <PrimaryButton title="Aceptar" onPress={() => setStep('mode')} />
+        </Sheet>
+      )}
+
+      {step === 'mode' && (
+        <Sheet onBack={() => setStep('range')} insetBottom={insets.bottom}>
+          <Text style={styles.sheetTitle}>¿Qué estás buscando?</Text>
+          <Pressable
+            onPress={() => setStep('garages')}
+            style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
+          >
+            <View style={[styles.modeBadge, { backgroundColor: GARAGE_BLUE }]}>
+              <Text style={styles.garageE}>E</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modeTitle}>Garage privado</Text>
+              <Text style={styles.modeSub}>Cocheras disponibles en el mapa</Text>
+            </View>
+            <Text style={styles.modeArrow}>›</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              chooseHours(DEFAULT_HOURS);
+              setStep('trapito');
+            }}
+            style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
+          >
+            <View style={[styles.modeBadge, { backgroundColor: colors.primary }]}>
+              <Text style={styles.modeBadgeEmoji}>🧤</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modeTitle}>Trapito</Text>
+              <Text style={styles.modeSub}>Avisá y que alguien te abra su lugar</Text>
+            </View>
+            <Text style={styles.modeArrow}>›</Text>
+          </Pressable>
+        </Sheet>
+      )}
+
+      {step === 'garages' && (
+        <Sheet onBack={() => setStep('mode')} insetBottom={insets.bottom}>
+          <Text style={styles.sheetTitle}>
+            {garages.length} garage{garages.length === 1 ? '' : 's'} cerca
+          </Text>
+          <Text style={styles.sheetBody}>
+            {garages.length > 0
+              ? 'Tocá un marcador azul en el mapa para ver la cochera.'
+              : 'No hay garages dentro de tu zona. Probá ampliar cuánto caminás.'}
+          </Text>
+        </Sheet>
+      )}
+
+      {step === 'trapito' && (
+        <Sheet onBack={() => setStep('mode')} insetBottom={insets.bottom}>
+          <Text style={styles.sheetTitle}>Armá tu pedido</Text>
+
+          <Text style={styles.fieldLabel}>¿Cuánto tiempo te quedás?</Text>
+          <ChipRow
+            options={HOUR_OPTIONS}
+            value={hours}
+            onChange={chooseHours}
+            format={(h) => `${h} h`}
+          />
+
+          <Text style={styles.fieldLabel}>¿Cuánto querés pagar?</Text>
+          <View style={styles.priceRow}>
+            <Pressable
+              onPress={() => setPrice((p) => Math.max(0, p - PRICE_STEP))}
+              style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>−</Text>
+            </Pressable>
+            <View style={styles.priceValue}>
+              <Text style={styles.priceText}>
+                {price === 0 ? 'Gratis' : `$${formatArs(price)}`}
+              </Text>
+              <Text style={styles.priceHint}>Sugerido ${formatArs(BASE_PER_HOUR * hours)}</Text>
+            </View>
+            <Pressable
+              onPress={() => setPrice((p) => p + PRICE_STEP)}
+              style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>+</Text>
+            </Pressable>
+          </View>
+
+          {price !== 0 && (
+            <Pressable onPress={() => setPrice(0)} hitSlop={8} style={styles.freeLink}>
+              <Text style={styles.freeLinkText}>Pedir estacionar gratis</Text>
+            </Pressable>
+          )}
+
+          <PrimaryButton title="Buscar estacionamiento" onPress={startBroadcasting} />
+        </Sheet>
+      )}
+
+      {step === 'broadcasting' && destination && (
+        <Sheet insetBottom={insets.bottom}>
+          <View style={styles.broadcastHeader}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.broadcastTitle}>Buscando estacionamiento…</Text>
+          </View>
+          <Text style={styles.sheetBody}>
+            Avisamos a los trapitos cerca de {destination.label}. Te quedás {hours} h ·{' '}
+            {price === 0 ? 'gratis' : `$${formatArs(price)}`}.
+          </Text>
+          <PrimaryButton title="Cancelar búsqueda" variant="secondary" onPress={resetSearch} />
+        </Sheet>
+      )}
+
+      {/* Buscador de destino (Places autocomplete). */}
       {searchOpen && (
         <View style={StyleSheet.absoluteFill}>
           <SafeAreaView style={styles.overlay} edges={['top', 'bottom']}>
@@ -193,7 +609,7 @@ export function MapScreen({ navigation }: Props) {
               </Pressable>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Buscar por dirección o quién lo liberó…"
+                placeholder="¿A dónde vamos?"
                 placeholderTextColor={colors.textTertiary}
                 value={query}
                 onChangeText={setQuery}
@@ -202,30 +618,73 @@ export function MapScreen({ navigation }: Props) {
               />
             </View>
 
-            <Text style={styles.resultsHeader}>
-              {filtered.length} lugar{filtered.length === 1 ? '' : 'es'} dentro de{' '}
-              {RADIUS_METERS} m
-            </Text>
-
-            <FlatList
-              data={filtered}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.list}
-              ListEmptyComponent={
-                <Text style={styles.empty}>
-                  No hay estacionamientos que coincidan con tu búsqueda.
-                </Text>
-              }
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => goToSpot(item)}
-                  style={({ pressed }) => pressed && styles.pressed}
-                >
-                  <ParkingRow spot={item} />
-                </Pressable>
-              )}
-            />
+            {query.trim().length < 3 ? (
+              <FlatList
+                data={recents}
+                keyExtractor={(item, i) => `${item.label}-${i}`}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.list}
+                ListHeaderComponent={
+                  recents.length ? (
+                    <Text style={styles.listHeader}>Búsquedas recientes</Text>
+                  ) : null
+                }
+                ListEmptyComponent={
+                  <Text style={styles.empty}>
+                    Escribí una dirección o un lugar para buscar.
+                  </Text>
+                }
+                renderItem={({ item }) => (
+                  <Pressable
+                    onPress={() => pickRecent(item)}
+                    style={({ pressed }) => [styles.placeRow, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.placePin}>🕘</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.placeMain} numberOfLines={1}>
+                        {item.label}
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+              />
+            ) : (
+              <FlatList
+                data={predictions}
+                keyExtractor={(item) => item.placeId}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.list}
+                ListEmptyComponent={
+                  searching ? (
+                    <View style={styles.searchHint}>
+                      <ActivityIndicator color={colors.primary} />
+                    </View>
+                  ) : (
+                    <Text style={styles.empty}>
+                      No encontramos ese lugar. Probá con otra dirección.
+                    </Text>
+                  )
+                }
+                renderItem={({ item }) => (
+                  <Pressable
+                    onPress={() => pickPrediction(item)}
+                    style={({ pressed }) => [styles.placeRow, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.placePin}>📍</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.placeMain} numberOfLines={1}>
+                        {item.mainText}
+                      </Text>
+                      {!!item.secondaryText && (
+                        <Text style={styles.placeSecondary} numberOfLines={1}>
+                          {item.secondaryText}
+                        </Text>
+                      )}
+                    </View>
+                  </Pressable>
+                )}
+              />
+            )}
           </SafeAreaView>
         </View>
       )}
@@ -233,22 +692,79 @@ export function MapScreen({ navigation }: Props) {
   );
 }
 
-function ParkingRow({ spot }: { spot: SpotWithDistance }) {
-  const isGarage = spot.type === 'garage';
+/** Offset del botón "centrar" según haya o no bottom sheet visible. */
+function bottomOffsetFor(step: Step): number {
+  return step === 'idle' ? 24 : 280;
+}
+
+/**
+ * Marker con vista custom que evita el titileo en Android: arranca con
+ * `tracksViewChanges` en true (para que se dibuje la vista) y lo apaga al toque,
+ * así deja de redibujarse en loop. El pin sigue moviéndose con el mapa.
+ */
+function FrozenMarker(props: React.ComponentProps<typeof Marker>) {
+  const [tracks, setTracks] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setTracks(false), 800);
+    return () => clearTimeout(t);
+  }, []);
+  return <Marker {...props} tracksViewChanges={tracks} />;
+}
+
+/** Tarjeta inferior reutilizable para los pasos del flujo. */
+function Sheet({
+  children,
+  onBack,
+  insetBottom,
+}: {
+  children: React.ReactNode;
+  onBack?: () => void;
+  insetBottom: number;
+}) {
   return (
-    <View style={styles.row}>
-      <View style={[styles.rowIcon, { backgroundColor: isGarage ? colors.chipWarm : colors.alertSoft }]}>
-        <Text style={styles.rowEmoji}>{isGarage ? '🏢' : '🚙'}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.rowTitle}>{spot.address}</Text>
-        <Text style={styles.rowSub}>
-          {isGarage ? 'Cochera' : `Liberado por ${spot.reportedBy}`} · hace {spot.minutesAgo} min
-        </Text>
-      </View>
-      <View style={styles.distancePill}>
-        <Text style={styles.distanceText}>{formatDistance(spot.distance)}</Text>
-      </View>
+    <View style={[styles.sheet, { paddingBottom: insetBottom + 20 }]}>
+      {onBack && (
+        <Pressable onPress={onBack} hitSlop={10} style={styles.sheetBack}>
+          <Text style={styles.backArrow}>←</Text>
+        </Pressable>
+      )}
+      {children}
+    </View>
+  );
+}
+
+/** Fila de chips seleccionables (rango de caminata, tiempo). */
+function ChipRow({
+  options,
+  value,
+  onChange,
+  format,
+}: {
+  options: number[];
+  value: number;
+  onChange: (v: number) => void;
+  format: (v: number) => string;
+}) {
+  return (
+    <View style={styles.chipRow}>
+      {options.map((opt) => {
+        const active = opt === value;
+        return (
+          <Pressable
+            key={opt}
+            onPress={() => onChange(opt)}
+            style={({ pressed }) => [
+              styles.chip,
+              active && styles.chipActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              {format(opt)}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -291,11 +807,7 @@ const styles = StyleSheet.create({
     ...FLOATING_SHADOW,
   },
   avatar: { width: 52, height: 52, borderRadius: radius.pill },
-  avatarFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-  },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   avatarInitial: { color: colors.onPrimary, fontSize: 20, fontWeight: '800' },
 
   locateButton: {
@@ -311,6 +823,115 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
 
+  // --- Marcadores ---
+  destPin: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: colors.white,
+    ...shadows.floating,
+  },
+  destPinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.white },
+  garageBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: GARAGE_BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.white,
+    ...shadows.floating,
+  },
+  garageE: { color: colors.white, fontWeight: '800', fontSize: 16 },
+
+  // --- Bottom sheet ---
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.bottomSheet,
+    borderTopRightRadius: radius.bottomSheet,
+    paddingHorizontal: spacing.screenH,
+    paddingTop: 20,
+    gap: 14,
+    ...shadows.modal,
+  },
+  sheetBack: { alignSelf: 'flex-start', paddingVertical: 2 },
+  sheetEyebrow: { ...typography.small, color: colors.primary },
+  sheetTitle: { ...typography.titleLg, fontSize: 26, lineHeight: 30, color: colors.text },
+  sheetBody: { ...typography.body, fontSize: 15, lineHeight: 22, color: colors.textMuted },
+  placeAddress: { ...typography.titleMd, fontSize: 19, color: colors.text },
+
+  // --- Slider de caminata ---
+  walkValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  walkValue: { ...typography.titleLg, fontSize: 30, color: colors.primary },
+  walkValueSub: { ...typography.small, color: colors.textMuted },
+  walkRangeLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -4 },
+  walkRangeText: { ...typography.small, fontSize: 12, color: colors.textTertiary },
+
+  // --- Chips ---
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceWarm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { ...typography.small, color: colors.text },
+  chipTextActive: { color: colors.onPrimary, fontWeight: '700' },
+
+  // --- Modo: garage / trapito ---
+  modeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: colors.surfaceWarm,
+    borderRadius: radius.cardSm,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modeBadge: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  modeBadgeEmoji: { fontSize: 22 },
+  modeTitle: { ...typography.titleMd, fontSize: 17, color: colors.text },
+  modeSub: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  modeArrow: { fontSize: 26, color: colors.textTertiary },
+
+  // --- Precio ---
+  fieldLabel: { ...typography.small, color: colors.textMuted, marginTop: 2 },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  stepBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.input,
+    backgroundColor: colors.surfaceWarm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBtnText: { fontSize: 26, fontWeight: '700', color: colors.text },
+  priceValue: { flex: 1, alignItems: 'center' },
+  priceText: { ...typography.titleLg, fontSize: 28, color: colors.text },
+  priceHint: { ...typography.small, fontSize: 12, color: colors.textTertiary, marginTop: 2 },
+  freeLink: { alignSelf: 'center', paddingVertical: 2 },
+  freeLinkText: { ...typography.small, color: colors.primary, textDecorationLine: 'underline' },
+
+  // --- Broadcasting ---
+  broadcastHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  broadcastTitle: { ...typography.titleMd, fontSize: 19, color: colors.text },
+
+  // --- Overlay buscador ---
   overlay: { flex: 1, backgroundColor: colors.backgroundAlt },
   searchHeader: {
     flexDirection: 'row',
@@ -332,13 +953,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.text,
   },
-  resultsHeader: {
-    ...typography.small,
-    paddingHorizontal: spacing.screenH,
-    paddingBottom: 8,
-    color: colors.textMuted,
-  },
-  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 12 },
+  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 4 },
+  listHeader: { ...typography.small, color: colors.textMuted, paddingVertical: 8, paddingHorizontal: 4 },
+  searchHint: { paddingTop: 32, alignItems: 'center' },
   empty: {
     ...typography.body,
     fontSize: 15,
@@ -348,32 +965,16 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 20,
   },
-  row: {
+  placeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    backgroundColor: colors.surface,
-    borderRadius: radius.cardSm,
-    padding: spacing.cardPadding,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.card,
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
   },
-  rowIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.input,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rowEmoji: { fontSize: 22 },
-  rowTitle: { ...typography.titleMd, fontSize: 15, lineHeight: 20, color: colors.text },
-  rowSub: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  distancePill: {
-    backgroundColor: colors.surfaceWarm,
-    borderRadius: radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  distanceText: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  placePin: { fontSize: 18 },
+  placeMain: { ...typography.titleMd, fontSize: 15, lineHeight: 20, color: colors.text },
+  placeSecondary: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
 });

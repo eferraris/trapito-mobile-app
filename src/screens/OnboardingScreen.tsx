@@ -33,23 +33,22 @@ const SLIDES: Slide[] = [
   {
     key: 'mapa',
     image: require('../../assets/mapa.png'),
-    title: 'Encontrá dónde\nestacionar',
-    subtitle: 'Buscá espacios disponibles cerca tuyo\ny evitá perder tiempo dando vueltas.',
+    title: 'Estacioná sin\ndar vueltas',
+    subtitle: 'Encontrá cocheras disponibles cerca de tu destino y reservá antes de llegar.',
     button: 'Siguiente',
   },
   {
     key: 'cochera_disponible',
-    image: require('../../assets/cochera_disponible.png'),
-    title: 'Reservá antes\nde llegar',
-    subtitle: 'Elegí un lugar disponible y asegurá\ntu espacio antes de salir.',
+    image: require('../../assets/busca.png'),
+    title: 'Elegí cómo\nestacionar',
+    subtitle: 'Decinos a dónde vas y elegí la opción que más te convenga.',
     button: 'Siguiente',
   },
   {
     key: 'espacio_publicado',
     image: require('../../assets/espacio_publicado.png'),
-    title: 'Publicá tu espacio',
-    subtitle:
-      'Si tenés garage, cochera o un lugar\ndisponible, podés alquilarlo y\ngenerar ingresos.',
+    title: 'Ofrecé tu cochera',
+    subtitle: 'Si tenés cochera libre, podés ofrecerla y convertirte en trapito.',
     button: 'Empezar',
   },
 ];

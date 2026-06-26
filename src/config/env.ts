@@ -14,6 +14,15 @@ export const isSupabaseConfigured =
   SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20;
 
 /**
+ * Google Places API key para la búsqueda de direcciones ("¿A dónde vamos?").
+ * Es independiente del mapa (en iOS usamos Apple Maps igual) y viaja en el bundle
+ * JS, por eso debe estar restringida solo a Places API. Ver .env.example.
+ */
+export const GOOGLE_PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? '';
+
+export const isPlacesConfigured = GOOGLE_PLACES_KEY.length > 20;
+
+/**
  * Expo Go: el login con Google requiere un build nativo (limitación de la
  * librería), así que en Expo Go nunca funciona. Lo detectamos para saltear el
  * login y poder probar la app directamente.

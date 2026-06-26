@@ -43,6 +43,8 @@ export function SplashScreen({ ready, onFinish }: Props) {
         source={require('../../assets/trapito.png')}
         style={styles.logo}
         resizeMode="contain"
+        // Sin fade-in: en Android Image hace fade por defecto al decodificar.
+        fadeDuration={0}
       />
       <Text style={styles.name}>trapito</Text>
     </Animated.View>

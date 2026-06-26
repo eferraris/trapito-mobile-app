@@ -29,6 +29,9 @@ const MOCK_OFFSETS: ParkingSpot[] = [
   { id: '6', reportedBy: 'Garage Premium', minutesAgo: 12, type: 'garage', address: 'Florida 540', offsetNorth: -420, offsetEast: 120 },
   { id: '7', reportedBy: 'Andrés', minutesAgo: 6, type: 'street', address: 'Viamonte 1100', offsetNorth: 620, offsetEast: 300 },
   { id: '8', reportedBy: 'Camila', minutesAgo: 4, type: 'street', address: 'Paraná 770', offsetNorth: -650, offsetEast: -400 },
+  { id: '9', reportedBy: 'Cochera Plaza', minutesAgo: 0, type: 'garage', address: 'San Martín 450', offsetNorth: 130, offsetEast: 90 },
+  { id: '10', reportedBy: 'Garage 24h', minutesAgo: 0, type: 'garage', address: 'Rivadavia 2100', offsetNorth: -190, offsetEast: -130 },
+  { id: '11', reportedBy: 'Estacionamiento Sur', minutesAgo: 0, type: 'garage', address: 'Belgrano 760', offsetNorth: 320, offsetEast: 250 },
 ];
 
 /** Metros -> grados de latitud. */
