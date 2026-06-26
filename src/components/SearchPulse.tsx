@@ -6,8 +6,6 @@ import { colors } from '../theme';
 type Props = {
   /** Radio máximo de las ondas, en píxeles (debe coincidir con el círculo de caminata). */
   pixelRadius: number;
-  /** Cuántos px subir el centro para alinearlo con el destino (que está sobre el panel). */
-  offsetY?: number;
 };
 
 const RING_COUNT = 3;
@@ -23,7 +21,7 @@ const DURATION = 2600;
  * pantalla coincide con el pin del destino. Evita animar <Marker> (poco fiable
  * en Android). pointerEvents="none" para no bloquear el botón de cancelar.
  */
-export function SearchPulse({ pixelRadius, offsetY = 0 }: Props) {
+export function SearchPulse({ pixelRadius }: Props) {
   const rings = useRef(
     Array.from({ length: RING_COUNT }, () => new Animated.Value(0))
   ).current;
@@ -71,10 +69,7 @@ export function SearchPulse({ pixelRadius, offsetY = 0 }: Props) {
   const pinScale = pinPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
 
   return (
-    <View
-      pointerEvents="none"
-      style={[styles.container, { transform: [{ translateY: -offsetY }] }]}
-    >
+    <View pointerEvents="none" style={styles.container}>
       {rings.map((value, i) => (
         <Animated.View
           key={i}

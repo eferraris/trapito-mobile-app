@@ -13,13 +13,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import MapView, { Circle, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import type { MarkerDragStartEndEvent, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 
 import { Crosshair } from '../components/Crosshair';
 import { SearchPulse } from '../components/SearchPulse';
 import { MeterSlider } from '../components/MeterSlider';
-import { MapPin, PIN } from '../components/MapPin';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
 import { colors, radius, shadows, spacing, typography } from '../theme';
@@ -50,6 +50,7 @@ type Destination = { coords: Coords; label: string };
 
 const FALLBACK: Coords = { latitude: -34.6037, longitude: -58.3816 }; // Obelisco, BA
 const GARAGE_BLUE = '#2563EB';
+const DEST_PIN_SIZE = 26;
 
 // Caminata: rango del slider, en metros.
 const WALK_MIN_M = 100;
@@ -68,12 +69,6 @@ const CIRCLE_FRACTION = 0.34;
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const PULSE_PIXEL_RADIUS = CIRCLE_FRACTION * SCREEN_W;
 
-// El panel inferior tapa parte del mapa. Con mapPadding.bottom el mapa proyecta
-// su centro en el centro del área visible (sobre el panel), así el pin queda
-// centrado ahí y la coordenada del centro es exacta (sin aproximar px→grados).
-const MAP_PADDING_BOTTOM = 300;
-const VISIBLE_SHIFT_PX = MAP_PADDING_BOTTOM / 2; // px que sube el centro visible
-
 const METERS_PER_DEG_LAT = 111_320;
 
 /** Encuadra el mapa para que un círculo de `meters` ocupe ~CIRCLE_FRACTION del ancho. */
@@ -83,7 +78,6 @@ function regionForRadius(c: Coords, meters: number): Region {
   const mapWidthMeters = meters / CIRCLE_FRACTION;
   const longitudeDelta = mapWidthMeters / metersPerDegLon;
   const latitudeDelta = longitudeDelta * (SCREEN_H / SCREEN_W);
-  // Sin desplazar la latitud: el mapPadding ya centra en el área visible.
   return { latitude: c.latitude, longitude: c.longitude, latitudeDelta, longitudeDelta };
 }
 
@@ -132,8 +126,6 @@ export function MapScreen({ navigation }: Props) {
   const [pinCoords, setPinCoords] = useState<Coords | null>(null);
   const [pinAddress, setPinAddress] = useState<string | null>(null);
   const [geocoding, setGeocoding] = useState(false);
-  // true solo cuando el usuario movió el mapa con el dedo (no en animaciones por código).
-  const userMoved = useRef(false);
 
   const isLocked = step === 'broadcasting';
 
@@ -229,18 +221,16 @@ export function MapScreen({ navigation }: Props) {
     addRecentSearch(details).then(setRecents);
   };
 
-  // Arranca el flujo en un destino: abre el paso de "fijar el punto" centrado
-  // en el lugar elegido, para que el usuario lo ajuste moviendo el mapa.
+  // Arranca el flujo con el marcador puesto en el lugar elegido y mueve la cámara ahí.
   const startFlowAt = (dest: Destination) => {
     setDestination(null);
     setPinCoords(dest.coords);
     setPinAddress(dest.label);
-    userMoved.current = false;
     setStep('place');
     animateToRegionAfterRender(toRegion(dest.coords, 0.005), 700);
   };
 
-  // Dirección del punto bajo el pin (centro del mapa). Usa el geocoder del SO.
+  // Dirección del marcador. Usa el geocoder del SO.
   const reverseGeocode = async (c: Coords) => {
     setGeocoding(true);
     try {
@@ -253,18 +243,11 @@ export function MapScreen({ navigation }: Props) {
     }
   };
 
-  const handleRegionChangeComplete = (region: Region) => {
+  const handlePinDragEnd = (event: MarkerDragStartEndEvent) => {
+    const coords = event.nativeEvent.coordinate;
     setMoving(false);
-    // Solo recalculamos el punto/dirección si el movimiento lo hizo el usuario.
-    // En animaciones por código (entrar al paso, volver atrás) conservamos el
-    // punto exacto ya elegido, así la dirección no cambia al ir y volver.
-    if (step === 'place' && userMoved.current) {
-      userMoved.current = false;
-      // Con mapPadding, el centro de la región ES el punto bajo el pin (exacto).
-      const c = { latitude: region.latitude, longitude: region.longitude };
-      setPinCoords(c);
-      reverseGeocode(c);
-    }
+    setPinCoords(coords);
+    reverseGeocode(coords);
   };
 
   // Confirma el punto fijado y pasa al rango de caminata.
@@ -282,7 +265,6 @@ export function MapScreen({ navigation }: Props) {
     setPinCoords(destination.coords);
     setPinAddress(destination.label);
     setDestination(null);
-    userMoved.current = false;
     setStep('place');
     mapRef.current?.animateToRegion(toRegion(destination.coords, 0.005), 500);
   };
@@ -342,8 +324,7 @@ export function MapScreen({ navigation }: Props) {
     </View>
   );
 
-  // El círculo se oculta mientras el mapa se mueve y reaparece al soltar.
-  const showCircle = !!destination && step !== 'idle' && !moving;
+  const showCircle = !!destination && step !== 'idle';
 
   return (
     <View style={styles.container}>
@@ -354,16 +335,14 @@ export function MapScreen({ navigation }: Props) {
         initialRegion={toRegion(center)}
         showsUserLocation
         showsMyLocationButton={false}
-        mapPadding={{ top: 0, right: 0, left: 0, bottom: step === 'idle' ? 0 : MAP_PADDING_BOTTOM }}
         scrollEnabled={!isLocked}
         zoomEnabled={!isLocked}
         rotateEnabled={!isLocked}
         pitchEnabled={!isLocked}
-        onPanDrag={() => {
-          userMoved.current = true;
+        onRegionChange={() => {
+          if (step !== 'place') setMoving(true);
         }}
-        onRegionChange={() => setMoving(true)}
-        onRegionChangeComplete={handleRegionChangeComplete}
+        onRegionChangeComplete={() => setMoving(false)}
       >
         {showCircle && destination && (
           <Circle
@@ -384,6 +363,20 @@ export function MapScreen({ navigation }: Props) {
           </FrozenMarker>
         )}
 
+        {pinCoords && step === 'place' && (
+          <Marker
+            coordinate={pinCoords}
+            anchor={{ x: 0.5, y: 0.5 }}
+            draggable
+            onDragStart={() => setMoving(true)}
+            onDragEnd={handlePinDragEnd}
+          >
+            <View style={styles.destPin}>
+              <View style={styles.destPinDot} />
+            </View>
+          </Marker>
+        )}
+
         {/* Garages privados: "E" blanca sobre fondo azul. */}
         {step === 'garages' &&
           garages.map((g) => (
@@ -401,24 +394,9 @@ export function MapScreen({ navigation }: Props) {
           ))}
       </MapView>
 
-      {/* Pin fijo en el centro visible: el mapa se mueve debajo para fijar el punto. */}
-      {step === 'place' && (
-        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <View
-            style={{
-              position: 'absolute',
-              left: SCREEN_W / 2 - PIN.width / 2,
-              top: SCREEN_H / 2 - VISIBLE_SHIFT_PX - PIN.tipY,
-            }}
-          >
-            <MapPin />
-          </View>
-        </View>
-      )}
-
       {/* Animación de búsqueda activa (alineada con el destino, sobre el panel). */}
       {step === 'broadcasting' && (
-        <SearchPulse pixelRadius={PULSE_PIXEL_RADIUS} offsetY={VISIBLE_SHIFT_PX} />
+        <SearchPulse pixelRadius={PULSE_PIXEL_RADIUS} />
       )}
 
       {/* Barra superior: solo en idle. */}
@@ -442,13 +420,13 @@ export function MapScreen({ navigation }: Props) {
         </View>
       )}
 
-      {/* Botón flotante: centrar en mi ubicación (oculto en broadcasting). */}
-      {!isLocked && (
+      {/* Botón flotante: centrar en mi ubicación. */}
+      {step === 'idle' && (
         <Pressable
           onPress={() => fetchLocation(true)}
           style={({ pressed }) => [
             styles.locateButton,
-            { bottom: insets.bottom + bottomOffsetFor(step) },
+            { bottom: insets.bottom + 24 },
             pressed && styles.pressed,
           ]}
           hitSlop={8}
@@ -464,8 +442,12 @@ export function MapScreen({ navigation }: Props) {
           <Text style={styles.placeAddress} numberOfLines={2}>
             {moving || geocoding ? 'Ajustando ubicación…' : pinAddress ?? 'Sin dirección'}
           </Text>
-          <Text style={styles.sheetBody}>Mové el mapa para fijar el punto exacto.</Text>
-          <PrimaryButton title="Confirmar" onPress={confirmPlace} disabled={moving || !pinCoords} />
+          <Text style={styles.sheetBody}>Arrastrá el marcador para ajustar el punto exacto.</Text>
+          <PrimaryButton
+            title="Confirmar"
+            onPress={confirmPlace}
+            disabled={moving || geocoding || !pinCoords}
+          />
         </Sheet>
       )}
 
@@ -692,11 +674,6 @@ export function MapScreen({ navigation }: Props) {
   );
 }
 
-/** Offset del botón "centrar" según haya o no bottom sheet visible. */
-function bottomOffsetFor(step: Step): number {
-  return step === 'idle' ? 24 : 280;
-}
-
 /**
  * Marker con vista custom que evita el titileo en Android: arranca con
  * `tracksViewChanges` en true (para que se dibuje la vista) y lo apaga al toque,
@@ -825,9 +802,9 @@ const styles = StyleSheet.create({
 
   // --- Marcadores ---
   destPin: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: DEST_PIN_SIZE,
+    height: DEST_PIN_SIZE,
+    borderRadius: DEST_PIN_SIZE / 2,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
