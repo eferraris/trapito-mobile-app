@@ -121,6 +121,10 @@ export function OnboardingScreen({ onClose }: Props) {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onMomentumEnd}
+        initialNumToRender={SLIDES.length}
+        maxToRenderPerBatch={SLIDES.length}
+        windowSize={SLIDES.length}
+        removeClippedSubviews={false}
         getItemLayout={(_, i) => ({
           length: SCREEN_W,
           offset: SCREEN_W * i,
