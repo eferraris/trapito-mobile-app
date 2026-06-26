@@ -9,7 +9,9 @@ type Props = {
 };
 
 const RING_COUNT = 3;
-const DURATION = 2600;
+const WAVE_DURATION_MS = 2600;
+const WAVE_INTERVAL_MS = 2000;
+const WAVE_LOOP_MS = RING_COUNT * WAVE_INTERVAL_MS;
 
 /**
  * Efecto visual del modo "buscando estacionamiento": un pin central que titila
@@ -29,17 +31,20 @@ export function SearchPulse({ pixelRadius }: Props) {
 
   useEffect(() => {
     const animations = rings.map((value, i) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay((DURATION / RING_COUNT) * i),
-          Animated.timing(value, {
-            toValue: 1,
-            duration: DURATION,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      )
+      Animated.sequence([
+        Animated.delay(WAVE_INTERVAL_MS * i),
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(value, {
+              toValue: 1,
+              duration: WAVE_DURATION_MS,
+              easing: Easing.out(Easing.ease),
+              useNativeDriver: true,
+            }),
+            Animated.delay(Math.max(0, WAVE_LOOP_MS - WAVE_DURATION_MS)),
+          ])
+        ),
+      ])
     );
     const pin = Animated.loop(
       Animated.sequence([

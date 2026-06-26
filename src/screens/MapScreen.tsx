@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { MarkerDragStartEndEvent, Region } from 'react-native-maps';
+import type { MapPressEvent, MarkerDragStartEndEvent, PoiClickEvent, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 
 import { Crosshair } from '../components/Crosshair';
@@ -23,7 +23,7 @@ import { MeterSlider } from '../components/MeterSlider';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
 import { colors, radius, shadows, spacing, typography } from '../theme';
-import { buildMockParkings } from '../data/mockParkings';
+import { buildMockParkings, type ParkingSpotWithCoords } from '../data/mockParkings';
 import { distanceInMeters, formatDistance, Coords } from '../utils/distance';
 import {
   getPlaceDetails,
@@ -47,6 +47,7 @@ type Props = AppScreenProps<'Map'>;
 type Step = 'idle' | 'place' | 'range' | 'mode' | 'garages' | 'trapito' | 'broadcasting';
 
 type Destination = { coords: Coords; label: string };
+type Garage = ParkingSpotWithCoords & { distance: number };
 
 const FALLBACK: Coords = { latitude: -34.6037, longitude: -58.3816 }; // Obelisco, BA
 const GARAGE_BLUE = '#2563EB';
@@ -72,12 +73,12 @@ const PULSE_PIXEL_RADIUS = CIRCLE_FRACTION * SCREEN_W;
 const METERS_PER_DEG_LAT = 111_320;
 
 /** Encuadra el mapa para que un círculo de `meters` ocupe ~CIRCLE_FRACTION del ancho. */
-function regionForRadius(c: Coords, meters: number): Region {
+function regionForRadius(c: Coords, meters: number, mapHeight = SCREEN_H): Region {
   const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos((c.latitude * Math.PI) / 180);
   // ancho del mapa en metros para que el radio sea CIRCLE_FRACTION * ancho
   const mapWidthMeters = meters / CIRCLE_FRACTION;
   const longitudeDelta = mapWidthMeters / metersPerDegLon;
-  const latitudeDelta = longitudeDelta * (SCREEN_H / SCREEN_W);
+  const latitudeDelta = longitudeDelta * (mapHeight / SCREEN_W);
   return { latitude: c.latitude, longitude: c.longitude, latitudeDelta, longitudeDelta };
 }
 
@@ -112,6 +113,7 @@ export function MapScreen({ navigation }: Props) {
   const [walkMeters, setWalkMeters] = useState(DEFAULT_WALK_M);
   const [hours, setHours] = useState(DEFAULT_HOURS);
   const [price, setPrice] = useState(BASE_PER_HOUR * DEFAULT_HOURS);
+  const [selectedGarageId, setSelectedGarageId] = useState<string | null>(null);
 
   // --- Buscador de destino (Places) ---
   const [searchOpen, setSearchOpen] = useState(false);
@@ -120,6 +122,8 @@ export function MapScreen({ navigation }: Props) {
   const [searching, setSearching] = useState(false);
   const [recents, setRecents] = useState<RecentSearch[]>([]);
   const [moving, setMoving] = useState(false);
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const [measuredSheetStep, setMeasuredSheetStep] = useState<Step>('idle');
   const sessionToken = useRef<string>('');
 
   // --- Fijar el punto exacto (step 'place') ---
@@ -128,6 +132,8 @@ export function MapScreen({ navigation }: Props) {
   const [geocoding, setGeocoding] = useState(false);
 
   const isLocked = step === 'broadcasting';
+  const activeSheetHeight = step === 'idle' ? 0 : sheetHeight;
+  const visibleMapHeight = Math.max(1, SCREEN_H - activeSheetHeight);
 
   const animateToRegionAfterRender = (region: Region, duration: number) => {
     requestAnimationFrame(() => {
@@ -185,7 +191,7 @@ export function MapScreen({ navigation }: Props) {
   }, [query, searchOpen, center]);
 
   // Garages privados dentro del radio de caminata, alrededor del destino.
-  const garages = useMemo(() => {
+  const garages = useMemo<Garage[]>(() => {
     if (!destination) return [];
     return buildMockParkings(destination.coords)
       .filter((s) => s.type === 'garage')
@@ -193,6 +199,7 @@ export function MapScreen({ navigation }: Props) {
       .filter((s) => s.distance <= walkMeters)
       .sort((a, b) => a.distance - b.distance);
   }, [destination, walkMeters]);
+  const selectedGarage = garages.find((garage) => garage.id === selectedGarageId) ?? null;
 
   const openSearch = () => {
     sessionToken.current = newSessionToken();
@@ -243,11 +250,28 @@ export function MapScreen({ navigation }: Props) {
     }
   };
 
-  const handlePinDragEnd = (event: MarkerDragStartEndEvent) => {
-    const coords = event.nativeEvent.coordinate;
+  const updatePinLocation = (coords: Coords, label?: string) => {
     setMoving(false);
     setPinCoords(coords);
-    reverseGeocode(coords);
+    if (label) {
+      setPinAddress(label);
+    } else {
+      reverseGeocode(coords);
+    }
+  };
+
+  const handleMapPress = (event: MapPressEvent) => {
+    if (step !== 'place' || event.nativeEvent.action === 'marker-press') return;
+    updatePinLocation(event.nativeEvent.coordinate);
+  };
+
+  const handlePoiClick = (event: PoiClickEvent) => {
+    if (step !== 'place') return;
+    updatePinLocation(event.nativeEvent.coordinate, event.nativeEvent.name);
+  };
+
+  const handlePinDragEnd = (event: MarkerDragStartEndEvent) => {
+    updatePinLocation(event.nativeEvent.coordinate);
   };
 
   // Confirma el punto fijado y pasa al rango de caminata.
@@ -256,7 +280,6 @@ export function MapScreen({ navigation }: Props) {
     setDestination({ coords: pinCoords, label: pinAddress ?? 'Punto en el mapa' });
     setWalkMeters(DEFAULT_WALK_M);
     setStep('range');
-    mapRef.current?.animateToRegion(regionForRadius(pinCoords, DEFAULT_WALK_M), 600);
   };
 
   // Vuelve del rango a la selección fina del punto (no a idle).
@@ -278,7 +301,7 @@ export function MapScreen({ navigation }: Props) {
   // Reencuadra el mapa al soltar el slider (en vivo solo crece el círculo).
   const reframeWalk = (meters: number) => {
     if (destination) {
-      mapRef.current?.animateToRegion(regionForRadius(destination.coords, meters), 300);
+      mapRef.current?.animateToRegion(regionForRadius(destination.coords, meters, visibleMapHeight), 300);
     }
   };
 
@@ -289,9 +312,30 @@ export function MapScreen({ navigation }: Props) {
 
   const startBroadcasting = () => {
     if (destination) {
-      mapRef.current?.animateToRegion(regionForRadius(destination.coords, walkMeters), 500);
+      mapRef.current?.animateToRegion(
+        regionForRadius(destination.coords, walkMeters, visibleMapHeight),
+        500
+      );
     }
     setStep('broadcasting');
+  };
+
+  const selectGarage = (garage: Garage) => {
+    setSelectedGarageId(garage.id);
+    mapRef.current?.animateToRegion(toRegion(garage.coords, 0.004), 350);
+  };
+
+  const openGarageList = () => {
+    setSelectedGarageId(null);
+    setStep('garages');
+  };
+
+  const backFromGarages = () => {
+    if (selectedGarageId) {
+      setSelectedGarageId(null);
+      return;
+    }
+    setStep('mode');
   };
 
   // Vuelve al estado inicial (cancelar / cerrar el flujo).
@@ -300,11 +344,20 @@ export function MapScreen({ navigation }: Props) {
     setDestination(null);
     setPinCoords(null);
     setPinAddress(null);
+    setSelectedGarageId(null);
     setWalkMeters(DEFAULT_WALK_M);
     setHours(DEFAULT_HOURS);
     setPrice(BASE_PER_HOUR * DEFAULT_HOURS);
     if (center) mapRef.current?.animateToRegion(toRegion(center), 500);
   };
+
+  useEffect(() => {
+    if (step !== 'range' || !destination || measuredSheetStep !== 'range') return;
+    animateToRegionAfterRender(
+      regionForRadius(destination.coords, walkMeters, visibleMapHeight),
+      600
+    );
+  }, [step, destination, measuredSheetStep, visibleMapHeight]);
 
   if (loading || !center) {
     return (
@@ -325,12 +378,19 @@ export function MapScreen({ navigation }: Props) {
   );
 
   const showCircle = !!destination && step !== 'idle';
+  const sheetProps = {
+    insetBottom: insets.bottom,
+    onHeightChange: (height: number) => {
+      setSheetHeight(height);
+      setMeasuredSheetStep(step);
+    },
+  };
 
   return (
     <View style={styles.container}>
       <MapView
         ref={mapRef}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { bottom: activeSheetHeight }]}
         provider={MAP_PROVIDER}
         initialRegion={toRegion(center)}
         showsUserLocation
@@ -343,6 +403,8 @@ export function MapScreen({ navigation }: Props) {
           if (step !== 'place') setMoving(true);
         }}
         onRegionChangeComplete={() => setMoving(false)}
+        onPress={handleMapPress}
+        onPoiClick={handlePoiClick}
       >
         {showCircle && destination && (
           <Circle
@@ -379,24 +441,32 @@ export function MapScreen({ navigation }: Props) {
 
         {/* Garages privados: "E" blanca sobre fondo azul. */}
         {step === 'garages' &&
-          garages.map((g) => (
-            <FrozenMarker
-              key={g.id}
-              coordinate={g.coords}
-              anchor={{ x: 0.5, y: 0.5 }}
-              title={g.address}
-              description={`Garage privado · ${formatDistance(g.distance)}`}
-            >
-              <View style={styles.garageBadge}>
-                <Text style={styles.garageE}>E</Text>
-              </View>
-            </FrozenMarker>
-          ))}
+          garages.map((g) => {
+            const selected = selectedGarageId === g.id;
+            return (
+              <FrozenMarker
+                key={`${g.id}-${selected ? 'selected' : 'normal'}`}
+                coordinate={g.coords}
+                anchor={{ x: 0.5, y: 0.5 }}
+                title={g.address}
+                description={`Garage privado · ${formatDistance(g.distance)} · $${formatArs(
+                  g.pricePerHour ?? 0
+                )}/h`}
+                onPress={() => selectGarage(g)}
+              >
+                <View style={[styles.garageBadge, selected && styles.garageBadgeSelected]}>
+                  <Text style={styles.garageE}>E</Text>
+                </View>
+              </FrozenMarker>
+            );
+          })}
       </MapView>
 
       {/* Animación de búsqueda activa (alineada con el destino, sobre el panel). */}
       {step === 'broadcasting' && (
-        <SearchPulse pixelRadius={PULSE_PIXEL_RADIUS} />
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { bottom: activeSheetHeight }]}>
+          <SearchPulse pixelRadius={PULSE_PIXEL_RADIUS} />
+        </View>
       )}
 
       {/* Barra superior: solo en idle. */}
@@ -437,7 +507,7 @@ export function MapScreen({ navigation }: Props) {
 
       {/* --- Bottom sheets por paso --- */}
       {step === 'place' && (
-        <Sheet onBack={resetSearch} insetBottom={insets.bottom}>
+        <Sheet onBack={resetSearch} {...sheetProps}>
           <Text style={styles.sheetEyebrow}>Elegí tu destino</Text>
           <Text style={styles.placeAddress} numberOfLines={2}>
             {moving || geocoding ? 'Ajustando ubicación…' : pinAddress ?? 'Sin dirección'}
@@ -452,7 +522,7 @@ export function MapScreen({ navigation }: Props) {
       )}
 
       {step === 'range' && destination && (
-        <Sheet onBack={backToPlace} insetBottom={insets.bottom}>
+        <Sheet onBack={backToPlace} {...sheetProps}>
           <Text style={styles.sheetEyebrow}>{destination.label}</Text>
           <Text style={styles.sheetTitle}>¿Cuánto estás{'\n'}dispuesto a caminar?</Text>
           <View style={styles.walkValueRow}>
@@ -476,55 +546,104 @@ export function MapScreen({ navigation }: Props) {
       )}
 
       {step === 'mode' && (
-        <Sheet onBack={() => setStep('range')} insetBottom={insets.bottom}>
+        <Sheet onBack={() => setStep('range')} {...sheetProps}>
           <Text style={styles.sheetTitle}>¿Qué estás buscando?</Text>
-          <Pressable
-            onPress={() => setStep('garages')}
-            style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
-          >
-            <View style={[styles.modeBadge, { backgroundColor: GARAGE_BLUE }]}>
-              <Text style={styles.garageE}>E</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.modeTitle}>Garage privado</Text>
-              <Text style={styles.modeSub}>Cocheras disponibles en el mapa</Text>
-            </View>
-            <Text style={styles.modeArrow}>›</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              chooseHours(DEFAULT_HOURS);
-              setStep('trapito');
-            }}
-            style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
-          >
-            <View style={[styles.modeBadge, { backgroundColor: colors.primary }]}>
-              <Text style={styles.modeBadgeEmoji}>🧤</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.modeTitle}>Trapito</Text>
-              <Text style={styles.modeSub}>Avisá y que alguien te abra su lugar</Text>
-            </View>
-            <Text style={styles.modeArrow}>›</Text>
-          </Pressable>
+          <View style={styles.modeOptions}>
+            <Pressable
+              onPress={openGarageList}
+              style={({ pressed }) => [styles.modeOption, pressed && styles.pressed]}
+            >
+              <View style={[styles.modeRail, { backgroundColor: GARAGE_BLUE }]} />
+              <View style={styles.modeContent}>
+                <Text style={styles.modeOverline}>Cocheras disponibles</Text>
+                <Text style={styles.modeTitle}>Garage privado</Text>
+                <Text style={styles.modeSub}>
+                  Ver lugares publicados dentro del rango que marcaste.
+                </Text>
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                chooseHours(DEFAULT_HOURS);
+                setStep('trapito');
+              }}
+              style={({ pressed }) => [styles.modeOption, pressed && styles.pressed]}
+            >
+              <View style={[styles.modeRail, { backgroundColor: colors.primary }]} />
+              <View style={styles.modeContent}>
+                <Text style={styles.modeOverline}>Pedido a la zona</Text>
+                <Text style={styles.modeTitle}>Trapito</Text>
+                <Text style={styles.modeSub}>Avisar a personas cerca de tu destino.</Text>
+              </View>
+            </Pressable>
+          </View>
         </Sheet>
       )}
 
       {step === 'garages' && (
-        <Sheet onBack={() => setStep('mode')} insetBottom={insets.bottom}>
-          <Text style={styles.sheetTitle}>
-            {garages.length} garage{garages.length === 1 ? '' : 's'} cerca
-          </Text>
-          <Text style={styles.sheetBody}>
-            {garages.length > 0
-              ? 'Tocá un marcador azul en el mapa para ver la cochera.'
-              : 'No hay garages dentro de tu zona. Probá ampliar cuánto caminás.'}
-          </Text>
+        <Sheet onBack={backFromGarages} {...sheetProps}>
+          {selectedGarage ? (
+            <>
+              <Text style={styles.sheetEyebrow}>Garage seleccionado</Text>
+              <Text style={styles.sheetTitle}>{selectedGarage.reportedBy}</Text>
+              <View style={styles.garageDetailPriceRow}>
+                <Text style={styles.garageDetailPrice}>
+                  ${formatArs(selectedGarage.pricePerHour ?? 0)}
+                </Text>
+                <Text style={styles.garageDetailPriceSub}>por hora</Text>
+              </View>
+              <View style={styles.garageDetailMeta}>
+                <Text style={styles.garageDetailMetaText}>{selectedGarage.address}</Text>
+                <Text style={styles.garageDetailMetaText}>
+                  {formatDistance(selectedGarage.distance)} de tu destino
+                </Text>
+              </View>
+              <PrimaryButton
+                title="Ver otros garages"
+                variant="secondary"
+                onPress={() => setSelectedGarageId(null)}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.sheetTitle}>
+                {garages.length} garage{garages.length === 1 ? '' : 's'} cerca
+              </Text>
+              {garages.length > 0 ? (
+                <View style={styles.garageList}>
+                  {garages.map((garage) => (
+                    <Pressable
+                      key={garage.id}
+                      onPress={() => selectGarage(garage)}
+                      style={({ pressed }) => [styles.garageRow, pressed && styles.pressed]}
+                    >
+                      <View style={styles.garageRowMain}>
+                        <Text style={styles.garageRowTitle}>{garage.reportedBy}</Text>
+                        <Text style={styles.garageRowSub}>
+                          {garage.address} · {formatDistance(garage.distance)}
+                        </Text>
+                      </View>
+                      <View style={styles.garageRowPrice}>
+                        <Text style={styles.garageRowPriceText}>
+                          ${formatArs(garage.pricePerHour ?? 0)}
+                        </Text>
+                        <Text style={styles.garageRowPriceSub}>/ h</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.sheetBody}>
+                  No hay garages dentro de tu zona. Probá ampliar cuánto caminás.
+                </Text>
+              )}
+            </>
+          )}
         </Sheet>
       )}
 
       {step === 'trapito' && (
-        <Sheet onBack={() => setStep('mode')} insetBottom={insets.bottom}>
+        <Sheet onBack={() => setStep('mode')} {...sheetProps}>
           <Text style={styles.sheetTitle}>Armá tu pedido</Text>
 
           <Text style={styles.fieldLabel}>¿Cuánto tiempo te quedás?</Text>
@@ -568,7 +687,7 @@ export function MapScreen({ navigation }: Props) {
       )}
 
       {step === 'broadcasting' && destination && (
-        <Sheet insetBottom={insets.bottom}>
+        <Sheet {...sheetProps}>
           <View style={styles.broadcastHeader}>
             <ActivityIndicator color={colors.primary} />
             <Text style={styles.broadcastTitle}>Buscando estacionamiento…</Text>
@@ -693,13 +812,18 @@ function Sheet({
   children,
   onBack,
   insetBottom,
+  onHeightChange,
 }: {
   children: React.ReactNode;
   onBack?: () => void;
   insetBottom: number;
+  onHeightChange?: (height: number) => void;
 }) {
   return (
-    <View style={[styles.sheet, { paddingBottom: insetBottom + 20 }]}>
+    <View
+      onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
+      style={[styles.sheet, { paddingBottom: insetBottom + 20 }]}
+    >
       {onBack && (
         <Pressable onPress={onBack} hitSlop={10} style={styles.sheetBack}>
           <Text style={styles.backArrow}>←</Text>
@@ -824,6 +948,10 @@ const styles = StyleSheet.create({
     borderColor: colors.white,
     ...shadows.floating,
   },
+  garageBadgeSelected: {
+    borderColor: colors.primary,
+    transform: [{ scale: 1.12 }],
+  },
   garageE: { color: colors.white, fontWeight: '800', fontSize: 16 },
 
   // --- Bottom sheet ---
@@ -833,10 +961,8 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.bottomSheet,
-    borderTopRightRadius: radius.bottomSheet,
     paddingHorizontal: spacing.screenH,
-    paddingTop: 20,
+    paddingTop: 12,
     gap: 14,
     ...shadows.modal,
   },
@@ -868,21 +994,99 @@ const styles = StyleSheet.create({
   chipTextActive: { color: colors.onPrimary, fontWeight: '700' },
 
   // --- Modo: garage / trapito ---
-  modeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+  modeOptions: { gap: 10 },
+  modeOption: {
+    minHeight: 92,
     backgroundColor: colors.surfaceWarm,
-    borderRadius: radius.cardSm,
-    padding: 16,
+    borderRadius: radius.input,
     borderWidth: 1,
     borderColor: colors.border,
+    overflow: 'hidden',
   },
-  modeBadge: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  modeBadgeEmoji: { fontSize: 22 },
-  modeTitle: { ...typography.titleMd, fontSize: 17, color: colors.text },
-  modeSub: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  modeArrow: { fontSize: 26, color: colors.textTertiary },
+  modeRail: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 5,
+  },
+  modeContent: {
+    paddingVertical: 14,
+    paddingLeft: 18,
+    paddingRight: 16,
+  },
+  modeOverline: { ...typography.small, fontSize: 12, lineHeight: 16, color: colors.textTertiary },
+  modeTitle: { ...typography.titleMd, fontSize: 18, lineHeight: 23, color: colors.text, marginTop: 3 },
+  modeSub: { ...typography.small, fontSize: 13, lineHeight: 18, color: colors.textMuted, marginTop: 4 },
+
+  // --- Garages ---
+  garageList: { gap: 8 },
+  garageRow: {
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceWarm,
+  },
+  garageRowMain: { flex: 1 },
+  garageRowTitle: {
+    ...typography.titleMd,
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.text,
+  },
+  garageRowSub: {
+    ...typography.small,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  garageRowPrice: { alignItems: 'flex-end' },
+  garageRowPriceText: {
+    ...typography.titleMd,
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.text,
+  },
+  garageRowPriceSub: {
+    ...typography.small,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.textTertiary,
+  },
+  garageDetailPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  garageDetailPrice: {
+    ...typography.titleLg,
+    fontSize: 30,
+    lineHeight: 34,
+    color: GARAGE_BLUE,
+  },
+  garageDetailPriceSub: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  garageDetailMeta: {
+    gap: 6,
+    padding: 14,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceWarm,
+  },
+  garageDetailMetaText: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
 
   // --- Precio ---
   fieldLabel: { ...typography.small, color: colors.textMuted, marginTop: 2 },

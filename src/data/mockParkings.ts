@@ -10,6 +10,8 @@ export type ParkingSpot = {
   type: 'street' | 'garage';
   /** Dirección aproximada (mock). */
   address: string;
+  /** Precio fijo por hora, solo para garages privados. */
+  pricePerHour?: number;
   /** Desplazamiento respecto del usuario, en metros (norte/este). Para mockear posiciones. */
   offsetNorth: number;
   offsetEast: number;
@@ -23,15 +25,15 @@ export type ParkingSpot = {
 const MOCK_OFFSETS: ParkingSpot[] = [
   { id: '1', reportedBy: 'Martín', minutesAgo: 2, type: 'street', address: 'Av. Corrientes 1234', offsetNorth: 80, offsetEast: 60 },
   { id: '2', reportedBy: 'Lucía', minutesAgo: 5, type: 'street', address: 'Sarmiento 850', offsetNorth: -120, offsetEast: 140 },
-  { id: '3', reportedBy: 'Cochera Centro', minutesAgo: 1, type: 'garage', address: 'Maipú 320', offsetNorth: 200, offsetEast: -180 },
+  { id: '3', reportedBy: 'Cochera Centro', minutesAgo: 1, type: 'garage', address: 'Maipú 320', pricePerHour: 1800, offsetNorth: 200, offsetEast: -180 },
   { id: '4', reportedBy: 'Diego', minutesAgo: 8, type: 'street', address: 'Lavalle 1500', offsetNorth: -300, offsetEast: -250 },
   { id: '5', reportedBy: 'Sofía', minutesAgo: 3, type: 'street', address: 'Tucumán 980', offsetNorth: 350, offsetEast: 200 },
-  { id: '6', reportedBy: 'Garage Premium', minutesAgo: 12, type: 'garage', address: 'Florida 540', offsetNorth: -420, offsetEast: 120 },
+  { id: '6', reportedBy: 'Garage Premium', minutesAgo: 12, type: 'garage', address: 'Florida 540', pricePerHour: 2400, offsetNorth: -420, offsetEast: 120 },
   { id: '7', reportedBy: 'Andrés', minutesAgo: 6, type: 'street', address: 'Viamonte 1100', offsetNorth: 620, offsetEast: 300 },
   { id: '8', reportedBy: 'Camila', minutesAgo: 4, type: 'street', address: 'Paraná 770', offsetNorth: -650, offsetEast: -400 },
-  { id: '9', reportedBy: 'Cochera Plaza', minutesAgo: 0, type: 'garage', address: 'San Martín 450', offsetNorth: 130, offsetEast: 90 },
-  { id: '10', reportedBy: 'Garage 24h', minutesAgo: 0, type: 'garage', address: 'Rivadavia 2100', offsetNorth: -190, offsetEast: -130 },
-  { id: '11', reportedBy: 'Estacionamiento Sur', minutesAgo: 0, type: 'garage', address: 'Belgrano 760', offsetNorth: 320, offsetEast: 250 },
+  { id: '9', reportedBy: 'Cochera Plaza', minutesAgo: 0, type: 'garage', address: 'San Martín 450', pricePerHour: 1600, offsetNorth: 130, offsetEast: 90 },
+  { id: '10', reportedBy: 'Garage 24h', minutesAgo: 0, type: 'garage', address: 'Rivadavia 2100', pricePerHour: 2100, offsetNorth: -190, offsetEast: -130 },
+  { id: '11', reportedBy: 'Estacionamiento Sur', minutesAgo: 0, type: 'garage', address: 'Belgrano 760', pricePerHour: 1500, offsetNorth: 320, offsetEast: 250 },
 ];
 
 /** Metros -> grados de latitud. */
