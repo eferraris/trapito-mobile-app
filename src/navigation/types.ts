@@ -4,6 +4,7 @@ export type AppStackParamList = {
   Login: undefined;
   Map: undefined;
   Profile: undefined;
+  Reservations: undefined;
 };
 
 export type AppScreenProps<T extends keyof AppStackParamList> =

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import { Alert, Image, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '../components/PrimaryButton';
 import { useAuth } from '../context/AuthContext';
-import { colors, fontFamily, spacing, typography } from '../theme';
+import { colors, fontFamily, radius, spacing, typography } from '../theme';
 import type { AppScreenProps } from '../navigation/types';
 
 type Props = AppScreenProps<'Profile'>;
 
-export function ProfileScreen(_props: Props) {
+export function ProfileScreen({ navigation }: Props) {
   const { user, signOut } = useAuth();
   const [loading, setLoading] = useState(false);
   const initial = (user?.name ?? user?.email ?? '?').trim().charAt(0).toUpperCase();
@@ -40,6 +40,18 @@ export function ProfileScreen(_props: Props) {
       </View>
 
       <View style={styles.actions}>
+        <Pressable
+          onPress={() => navigation.navigate('Reservations')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+        >
+          <Text style={styles.menuIcon}>🅿️</Text>
+          <View style={styles.menuTexts}>
+            <Text style={styles.menuTitle}>Mis reservas</Text>
+            <Text style={styles.menuSub}>Garages y trapitos que reservaste</Text>
+          </View>
+          <Text style={styles.menuChevron}>›</Text>
+        </Pressable>
+
         <PrimaryButton
           title="Cerrar sesión"
           icon="🚪"
@@ -78,5 +90,21 @@ const styles = StyleSheet.create({
   },
   name: { ...typography.titleLg, fontSize: 24, lineHeight: 30, color: colors.text },
   email: { ...typography.small, color: colors.textMuted },
-  actions: { padding: spacing.screenH },
+  actions: { padding: spacing.screenH, gap: 16 },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 16,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  menuItemPressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  menuIcon: { fontSize: 22 },
+  menuTexts: { flex: 1 },
+  menuTitle: { ...typography.titleMd, fontSize: 16, lineHeight: 21, color: colors.text },
+  menuSub: { ...typography.small, fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  menuChevron: { fontSize: 26, color: colors.textTertiary, marginTop: -2 },
 });

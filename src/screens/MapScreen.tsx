@@ -7,6 +7,7 @@ import {
   Image,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -36,6 +37,7 @@ import {
   loadRecentSearches,
   RecentSearch,
 } from '../lib/recentSearches';
+import { addReservation } from '../lib/reservations';
 import type { AppScreenProps } from '../navigation/types';
 
 // En Android usamos Google Maps; en iOS dejamos Apple Maps.
@@ -91,6 +93,25 @@ function formatArs(n: number): string {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
+/**
+ * Genera horarios de inicio en tramos de 30 min, desde la próxima media hora.
+ * Devuelve etiquetas "HH:mm" (la primera es "Ahora") para elegir el horario de reserva.
+ */
+function buildTimeSlots(count = 16): string[] {
+  const start = new Date();
+  start.setSeconds(0, 0);
+  const min = start.getMinutes();
+  start.setMinutes(min === 0 ? 0 : min <= 30 ? 30 : 60);
+  const slots: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(start.getTime() + i * 30 * 60_000);
+    const hh = d.getHours().toString().padStart(2, '0');
+    const mm = d.getMinutes().toString().padStart(2, '0');
+    slots.push(`${hh}:${mm}`);
+  }
+  return slots;
+}
+
 /** Arma una dirección legible a partir del resultado de reverseGeocodeAsync. */
 function formatGeocode(a?: Location.LocationGeocodedAddress): string {
   if (!a) return 'Punto en el mapa';
@@ -114,6 +135,10 @@ export function MapScreen({ navigation }: Props) {
   const [hours, setHours] = useState(DEFAULT_HOURS);
   const [price, setPrice] = useState(BASE_PER_HOUR * DEFAULT_HOURS);
   const [selectedGarageId, setSelectedGarageId] = useState<string | null>(null);
+
+  // Horario de reserva (compartido por garage y trapito). Tramos de 30 min.
+  const timeSlots = useMemo(() => buildTimeSlots(), []);
+  const [startTime, setStartTime] = useState(timeSlots[0]);
 
   // --- Buscador de destino (Places) ---
   const [searchOpen, setSearchOpen] = useState(false);
@@ -298,6 +323,14 @@ export function MapScreen({ navigation }: Props) {
     addRecentSearch(r).then(setRecents);
   };
 
+  // Arranca el flujo en la ubicación actual del usuario y refina la dirección.
+  const useMyLocation = () => {
+    if (!center) return;
+    closeSearch();
+    startFlowAt({ coords: center, label: 'Mi ubicación actual' });
+    reverseGeocode(center);
+  };
+
   // Reencuadra el mapa al soltar el slider (en vivo solo crece el círculo).
   const reframeWalk = (meters: number) => {
     if (destination) {
@@ -316,13 +349,47 @@ export function MapScreen({ navigation }: Props) {
         regionForRadius(destination.coords, walkMeters, visibleMapHeight),
         500
       );
+      // El pedido de trapito queda guardado como reserva con su horario.
+      addReservation({
+        id: `${Date.now()}`,
+        kind: 'trapito',
+        title: destination.label,
+        address: destination.label,
+        startTime,
+        hours,
+        price,
+        createdAt: Date.now(),
+      });
     }
     setStep('broadcasting');
   };
 
   const selectGarage = (garage: Garage) => {
     setSelectedGarageId(garage.id);
+    // Reseteamos los datos de reserva al abrir el detalle del garage.
+    setHours(DEFAULT_HOURS);
+    setStartTime(timeSlots[0]);
     mapRef.current?.animateToRegion(toRegion(garage.coords, 0.004), 350);
+  };
+
+  // Confirma la reserva del garage, la guarda y vuelve a la pantalla inicial.
+  const confirmGarageReservation = async () => {
+    if (!selectedGarage) return;
+    await addReservation({
+      id: `${Date.now()}`,
+      kind: 'garage',
+      title: selectedGarage.reportedBy,
+      address: selectedGarage.address,
+      startTime,
+      hours,
+      price: (selectedGarage.pricePerHour ?? 0) * hours,
+      createdAt: Date.now(),
+    });
+    Alert.alert(
+      'Reserva confirmada',
+      `Te esperamos en ${selectedGarage.reportedBy} a las ${startTime}.`
+    );
+    resetSearch();
   };
 
   const openGarageList = () => {
@@ -333,6 +400,13 @@ export function MapScreen({ navigation }: Props) {
   const backFromGarages = () => {
     if (selectedGarageId) {
       setSelectedGarageId(null);
+      // Volvemos a encuadrar el círculo del área de caminata.
+      if (destination) {
+        mapRef.current?.animateToRegion(
+          regionForRadius(destination.coords, walkMeters, visibleMapHeight),
+          350
+        );
+      }
       return;
     }
     setStep('mode');
@@ -348,6 +422,7 @@ export function MapScreen({ navigation }: Props) {
     setWalkMeters(DEFAULT_WALK_M);
     setHours(DEFAULT_HOURS);
     setPrice(BASE_PER_HOUR * DEFAULT_HOURS);
+    setStartTime(timeSlots[0]);
     if (center) mapRef.current?.animateToRegion(toRegion(center), 500);
   };
 
@@ -565,6 +640,7 @@ export function MapScreen({ navigation }: Props) {
             <Pressable
               onPress={() => {
                 chooseHours(DEFAULT_HOURS);
+                setStartTime(timeSlots[0]);
                 setStep('trapito');
               }}
               style={({ pressed }) => [styles.modeOption, pressed && styles.pressed]}
@@ -583,34 +659,50 @@ export function MapScreen({ navigation }: Props) {
       {step === 'garages' && (
         <Sheet onBack={backFromGarages} {...sheetProps}>
           {selectedGarage ? (
-            <>
-              <Text style={styles.sheetEyebrow}>Garage seleccionado</Text>
-              <Text style={styles.sheetTitle}>{selectedGarage.reportedBy}</Text>
-              <View style={styles.garageDetailPriceRow}>
-                <Text style={styles.garageDetailPrice}>
-                  ${formatArs(selectedGarage.pricePerHour ?? 0)}
-                </Text>
-                <Text style={styles.garageDetailPriceSub}>por hora</Text>
-              </View>
-              <View style={styles.garageDetailMeta}>
-                <Text style={styles.garageDetailMetaText}>{selectedGarage.address}</Text>
+            <View style={styles.garageDetail}>
+              <Text style={styles.sheetEyebrow} numberOfLines={1}>
+                {selectedGarage.address}
+              </Text>
+              <Text style={styles.garageDetailTitle}>{selectedGarage.reportedBy}</Text>
+              <View style={styles.garageDetailInfo}>
                 <Text style={styles.garageDetailMetaText}>
-                  {formatDistance(selectedGarage.distance)} de tu destino
+                  🚶 {formatDistance(selectedGarage.distance)}
+                </Text>
+                {selectedGarage.openHours && (
+                  <Text style={styles.garageDetailMetaText}>🕒 {selectedGarage.openHours}</Text>
+                )}
+              </View>
+
+              <Text style={styles.fieldLabel}>¿A qué hora llegás?</Text>
+              <TimeChips options={timeSlots} value={startTime} onChange={setStartTime} />
+
+              <Text style={styles.fieldLabel}>¿Cuánto tiempo?</Text>
+              <ChipRow
+                options={HOUR_OPTIONS}
+                value={hours}
+                onChange={setHours}
+                format={(h) => `${h} h`}
+              />
+
+              <View style={styles.garageTotalRow}>
+                <Text style={styles.garageTotalLabel}>Total estimado</Text>
+                <Text style={styles.garageTotalValue}>
+                  ${formatArs((selectedGarage.pricePerHour ?? 0) * hours)}
                 </Text>
               </View>
-              <PrimaryButton
-                title="Ver otros garages"
-                variant="secondary"
-                onPress={() => setSelectedGarageId(null)}
-              />
-            </>
+              <PrimaryButton title="Reservar garage" onPress={confirmGarageReservation} />
+            </View>
           ) : (
             <>
               <Text style={styles.sheetTitle}>
                 {garages.length} garage{garages.length === 1 ? '' : 's'} cerca
               </Text>
               {garages.length > 0 ? (
-                <View style={styles.garageList}>
+                <ScrollView
+                  style={styles.garageScroll}
+                  contentContainerStyle={styles.garageList}
+                  showsVerticalScrollIndicator={false}
+                >
                   {garages.map((garage) => (
                     <Pressable
                       key={garage.id}
@@ -622,6 +714,9 @@ export function MapScreen({ navigation }: Props) {
                         <Text style={styles.garageRowSub}>
                           {garage.address} · {formatDistance(garage.distance)}
                         </Text>
+                        {garage.openHours && (
+                          <Text style={styles.garageRowHours}>🕒 {garage.openHours}</Text>
+                        )}
                       </View>
                       <View style={styles.garageRowPrice}>
                         <Text style={styles.garageRowPriceText}>
@@ -631,7 +726,7 @@ export function MapScreen({ navigation }: Props) {
                       </View>
                     </Pressable>
                   ))}
-                </View>
+                </ScrollView>
               ) : (
                 <Text style={styles.sheetBody}>
                   No hay garages dentro de tu zona. Probá ampliar cuánto caminás.
@@ -645,6 +740,9 @@ export function MapScreen({ navigation }: Props) {
       {step === 'trapito' && (
         <Sheet onBack={() => setStep('mode')} {...sheetProps}>
           <Text style={styles.sheetTitle}>Armá tu pedido</Text>
+
+          <Text style={styles.fieldLabel}>¿A qué hora llegás?</Text>
+          <TimeChips options={timeSlots} value={startTime} onChange={setStartTime} />
 
           <Text style={styles.fieldLabel}>¿Cuánto tiempo te quedás?</Text>
           <ChipRow
@@ -726,9 +824,25 @@ export function MapScreen({ navigation }: Props) {
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.list}
                 ListHeaderComponent={
-                  recents.length ? (
-                    <Text style={styles.listHeader}>Búsquedas recientes</Text>
-                  ) : null
+                  <>
+                    <Pressable
+                      onPress={useMyLocation}
+                      style={({ pressed }) => [styles.locationRow, pressed && styles.pressed]}
+                    >
+                      <View style={styles.locationIcon}>
+                        <Crosshair size={18} color={colors.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.placeMain}>Usar mi ubicación actual</Text>
+                        <Text style={styles.placeSecondary}>
+                          Buscar estacionamiento cerca tuyo
+                        </Text>
+                      </View>
+                    </Pressable>
+                    {recents.length ? (
+                      <Text style={styles.listHeader}>Búsquedas recientes</Text>
+                    ) : null}
+                  </>
                 }
                 ListEmptyComponent={
                   <Text style={styles.empty}>
@@ -870,6 +984,44 @@ function ChipRow({
   );
 }
 
+/** Fila horizontal scrolleable de horarios ("HH:mm"). */
+function TimeChips({
+  options,
+  value,
+  onChange,
+}: {
+  options: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.timeChipRow}
+    >
+      {options.map((opt, i) => {
+        const active = opt === value;
+        return (
+          <Pressable
+            key={opt}
+            onPress={() => onChange(opt)}
+            style={({ pressed }) => [
+              styles.chip,
+              active && styles.chipActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              {i === 0 ? `Ahora · ${opt}` : opt}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 const FLOATING_SHADOW = shadows.floating;
 
 const styles = StyleSheet.create({
@@ -949,8 +1101,7 @@ const styles = StyleSheet.create({
     ...shadows.floating,
   },
   garageBadgeSelected: {
-    borderColor: colors.primary,
-    transform: [{ scale: 1.12 }],
+    backgroundColor: colors.primary,
   },
   garageE: { color: colors.white, fontWeight: '800', fontSize: 16 },
 
@@ -992,6 +1143,7 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { ...typography.small, color: colors.text },
   chipTextActive: { color: colors.onPrimary, fontWeight: '700' },
+  timeChipRow: { flexDirection: 'row', gap: 10, paddingRight: 4 },
 
   // --- Modo: garage / trapito ---
   modeOptions: { gap: 10 },
@@ -1020,7 +1172,11 @@ const styles = StyleSheet.create({
   modeSub: { ...typography.small, fontSize: 13, lineHeight: 18, color: colors.textMuted, marginTop: 4 },
 
   // --- Garages ---
-  garageList: { gap: 8 },
+  garageScroll: { maxHeight: SCREEN_H * 0.42 },
+  garageList: { gap: 8, paddingBottom: 4 },
+  garageDetail: { gap: 10 },
+  garageDetailTitle: { ...typography.titleLg, fontSize: 22, lineHeight: 26, color: colors.text },
+  garageDetailInfo: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 2 },
   garageRow: {
     minHeight: 74,
     flexDirection: 'row',
@@ -1047,6 +1203,13 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
+  garageRowHours: {
+    ...typography.small,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.textTertiary,
+    marginTop: 2,
+  },
   garageRowPrice: { alignItems: 'flex-end' },
   garageRowPriceText: {
     ...typography.titleMd,
@@ -1060,33 +1223,18 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: colors.textTertiary,
   },
-  garageDetailPriceRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
-  },
-  garageDetailPrice: {
-    ...typography.titleLg,
-    fontSize: 30,
-    lineHeight: 34,
-    color: GARAGE_BLUE,
-  },
-  garageDetailPriceSub: {
-    ...typography.small,
-    color: colors.textMuted,
-  },
-  garageDetailMeta: {
-    gap: 6,
-    padding: 14,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceWarm,
-  },
   garageDetailMetaText: {
     ...typography.small,
     color: colors.textMuted,
   },
+  garageTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+  },
+  garageTotalLabel: { ...typography.small, color: colors.textMuted },
+  garageTotalValue: { ...typography.titleMd, fontSize: 20, color: colors.text },
 
   // --- Precio ---
   fieldLabel: { ...typography.small, color: colors.textMuted, marginTop: 2 },
@@ -1158,4 +1306,21 @@ const styles = StyleSheet.create({
   placePin: { fontSize: 18 },
   placeMain: { ...typography.titleMd, fontSize: 15, lineHeight: 20, color: colors.text },
   placeSecondary: { ...typography.small, fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  locationIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.pill,
+    backgroundColor: colors.alertSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

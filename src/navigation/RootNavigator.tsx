@@ -11,6 +11,7 @@ import { OnboardingScreen } from '../screens/OnboardingScreen';
 import { SplashScreen } from '../screens/SplashScreen';
 import { MapScreen } from '../screens/MapScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { ReservationsScreen } from '../screens/ReservationsScreen';
 import type { AppStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<AppStackParamList>();
@@ -58,6 +59,11 @@ export function RootNavigator({ fontsReady = true }: Props) {
                 name="Profile"
                 component={ProfileScreen}
                 options={{ title: 'Mi perfil' }}
+              />
+              <Stack.Screen
+                name="Reservations"
+                component={ReservationsScreen}
+                options={{ title: 'Mis reservas' }}
               />
             </Stack.Navigator>
           ) : (
