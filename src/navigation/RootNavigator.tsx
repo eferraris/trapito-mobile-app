@@ -75,7 +75,11 @@ export function RootNavigator({ fontsReady = true }: Props) {
       )}
 
       {!splashDone && (
-        <SplashScreen ready={ready} onFinish={() => setSplashDone(true)} />
+        <SplashScreen
+          ready={ready}
+          fontsReady={fontsReady}
+          onFinish={() => setSplashDone(true)}
+        />
       )}
     </View>
   );

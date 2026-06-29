@@ -139,9 +139,6 @@ export function OnboardingScreen({ onClose }: Props) {
 
       <View style={styles.actions}>
         <PrimaryButton title={SLIDES[index].button} onPress={goNext} />
-        {isLast && (
-          <PrimaryButton title="Ya tengo cuenta" variant="secondary" onPress={onClose} />
-        )}
       </View>
     </SafeAreaView>
   );

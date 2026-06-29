@@ -4,6 +4,8 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import type { Coords } from '../utils/distance';
+
 const KEY = 'trapito.reservations';
 const MAX = 30;
 
@@ -16,6 +18,8 @@ export type Reservation = {
   title: string;
   /** Dirección de referencia. */
   address: string;
+  /** Coordenadas del destino, cuando la reserva tiene una ubicación navegable. */
+  coords?: Coords;
   /** Horario de inicio en formato "HH:mm". */
   startTime: string;
   /** Duración reservada, en horas. */
@@ -42,6 +46,18 @@ export async function addReservation(item: Reservation): Promise<Reservation[]> 
   try {
     const current = await loadReservations();
     const next = [item, ...current].slice(0, MAX);
+    await AsyncStorage.setItem(KEY, JSON.stringify(next));
+    return next;
+  } catch {
+    return [];
+  }
+}
+
+/** Cancela (elimina) una reserva por id y devuelve la lista actualizada. */
+export async function removeReservation(id: string): Promise<Reservation[]> {
+  try {
+    const current = await loadReservations();
+    const next = current.filter((r) => r.id !== id);
     await AsyncStorage.setItem(KEY, JSON.stringify(next));
     return next;
   } catch {

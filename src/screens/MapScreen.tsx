@@ -37,6 +37,7 @@ import {
   loadRecentSearches,
   RecentSearch,
 } from '../lib/recentSearches';
+import { openInDefaultNavigator } from '../lib/externalNavigation';
 import { addReservation } from '../lib/reservations';
 import type { AppScreenProps } from '../navigation/types';
 
@@ -136,8 +137,8 @@ export function MapScreen({ navigation }: Props) {
   const [price, setPrice] = useState(BASE_PER_HOUR * DEFAULT_HOURS);
   const [selectedGarageId, setSelectedGarageId] = useState<string | null>(null);
 
-  // Horario de reserva (compartido por garage y trapito). Tramos de 30 min.
-  const timeSlots = useMemo(() => buildTimeSlots(), []);
+  // Horario de reserva (compartido por garage y trapito). 4 tramos de 30 min + "Otro".
+  const timeSlots = useMemo(() => buildTimeSlots(4), []);
   const [startTime, setStartTime] = useState(timeSlots[0]);
 
   // --- Buscador de destino (Places) ---
@@ -375,21 +376,38 @@ export function MapScreen({ navigation }: Props) {
   // Confirma la reserva del garage, la guarda y vuelve a la pantalla inicial.
   const confirmGarageReservation = async () => {
     if (!selectedGarage) return;
-    await addReservation({
+    const reservation = {
       id: `${Date.now()}`,
       kind: 'garage',
       title: selectedGarage.reportedBy,
       address: selectedGarage.address,
+      coords: selectedGarage.coords,
       startTime,
       hours,
       price: (selectedGarage.pricePerHour ?? 0) * hours,
       createdAt: Date.now(),
-    });
+    } as const;
+
+    await addReservation(reservation);
     Alert.alert(
       'Reserva confirmada',
-      `Te esperamos en ${selectedGarage.reportedBy} a las ${startTime}.`
+      `Te esperamos en ${selectedGarage.reportedBy} a las ${startTime}.`,
+      [
+        { text: 'Ir después', style: 'cancel', onPress: resetSearch },
+        {
+          text: 'Ir ahora',
+          onPress: () => {
+            resetSearch();
+            openInDefaultNavigator({
+              coords: reservation.coords,
+              label: reservation.title,
+              address: reservation.address,
+            });
+          },
+        },
+      ],
+      { onDismiss: resetSearch }
     );
-    resetSearch();
   };
 
   const openGarageList = () => {
@@ -648,7 +666,7 @@ export function MapScreen({ navigation }: Props) {
               <View style={[styles.modeRail, { backgroundColor: colors.primary }]} />
               <View style={styles.modeContent}>
                 <Text style={styles.modeOverline}>Pedido a la zona</Text>
-                <Text style={styles.modeTitle}>Trapito</Text>
+                <Text style={styles.modeTitle}>Trapitos</Text>
                 <Text style={styles.modeSub}>Avisar a personas cerca de tu destino.</Text>
               </View>
             </Pressable>
@@ -948,7 +966,20 @@ function Sheet({
   );
 }
 
-/** Fila de chips seleccionables (rango de caminata, tiempo). */
+/** Botón − / + de un stepper. Sin teclado: no tapa nada del sheet. */
+function StepButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      style={({ pressed }) => [styles.miniStep, pressed && styles.pressed]}
+    >
+      <Text style={styles.miniStepText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** Fila de chips de horas con opción "Otro" (stepper de duración, sin teclado). */
 function ChipRow({
   options,
   value,
@@ -960,31 +991,70 @@ function ChipRow({
   onChange: (v: number) => void;
   format: (v: number) => string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const isCustom = !options.includes(value);
+  const setHours = (n: number) => onChange(Math.min(24, Math.max(1, n)));
+
   return (
-    <View style={styles.chipRow}>
-      {options.map((opt) => {
-        const active = opt === value;
-        return (
+    <View style={styles.fieldStack}>
+      <View style={styles.chipRow}>
+        {options.map((opt) => {
+          const active = opt === value;
+          return (
+            <Pressable
+              key={opt}
+              onPress={() => {
+                onChange(opt);
+                setEditing(false);
+              }}
+              style={({ pressed }) => [
+                styles.chip,
+                active && styles.chipActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {format(opt)}
+              </Text>
+            </Pressable>
+          );
+        })}
+        {isCustom && (
+          <View style={[styles.chip, styles.chipActive]}>
+            <Text style={[styles.chipText, styles.chipTextActive]}>{format(value)}</Text>
+          </View>
+        )}
+        <Pressable
+          onPress={() => setEditing((e) => !e)}
+          style={({ pressed }) => [
+            styles.chip,
+            editing && styles.chipActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={[styles.chipText, editing && styles.chipTextActive]}>Otro</Text>
+        </Pressable>
+      </View>
+      {editing && (
+        <View style={styles.stepperCard}>
+          <View style={styles.stepperControls}>
+            <StepButton label="−" onPress={() => setHours(value - 1)} />
+            <Text style={styles.stepperValue}>{format(value)}</Text>
+            <StepButton label="+" onPress={() => setHours(value + 1)} />
+          </View>
           <Pressable
-            key={opt}
-            onPress={() => onChange(opt)}
-            style={({ pressed }) => [
-              styles.chip,
-              active && styles.chipActive,
-              pressed && styles.pressed,
-            ]}
+            onPress={() => setEditing(false)}
+            style={({ pressed }) => [styles.stepperDone, pressed && styles.pressed]}
           >
-            <Text style={[styles.chipText, active && styles.chipTextActive]}>
-              {format(opt)}
-            </Text>
+            <Text style={styles.stepperDoneText}>Listo</Text>
           </Pressable>
-        );
-      })}
+        </View>
+      )}
     </View>
   );
 }
 
-/** Fila horizontal scrolleable de horarios ("HH:mm"). */
+/** Fila scrolleable de horarios con opción "Otro" (stepper HH:mm, sin teclado). */
 function TimeChips({
   options,
   value,
@@ -994,31 +1064,81 @@ function TimeChips({
   value: string;
   onChange: (v: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const isCustom = !options.includes(value);
+
+  const [h, m] = value.split(':').map((n) => parseInt(n, 10));
+  const apply = (nh: number, nm: number) =>
+    onChange(
+      `${String((nh + 24) % 24).padStart(2, '0')}:${String((nm + 60) % 60).padStart(2, '0')}`
+    );
+
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.timeChipRow}
-    >
-      {options.map((opt, i) => {
-        const active = opt === value;
-        return (
+    <View style={styles.fieldStack}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.timeChipRow}
+      >
+        {options.map((opt) => {
+          const active = opt === value;
+          return (
+            <Pressable
+              key={opt}
+              onPress={() => {
+                onChange(opt);
+                setEditing(false);
+              }}
+              style={({ pressed }) => [
+                styles.chip,
+                active && styles.chipActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt}</Text>
+            </Pressable>
+          );
+        })}
+        {isCustom && (
+          <View style={[styles.chip, styles.chipActive]}>
+            <Text style={[styles.chipText, styles.chipTextActive]}>{value}</Text>
+          </View>
+        )}
+        <Pressable
+          onPress={() => setEditing((e) => !e)}
+          style={({ pressed }) => [
+            styles.chip,
+            editing && styles.chipActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={[styles.chipText, editing && styles.chipTextActive]}>Otro</Text>
+        </Pressable>
+      </ScrollView>
+      {editing && (
+        <View style={styles.stepperCard}>
+          <View style={styles.stepperControls}>
+            <View style={styles.stepperGroup}>
+              <StepButton label="−" onPress={() => apply(h - 1, m)} />
+              <Text style={styles.stepperValue}>{String(h).padStart(2, '0')}</Text>
+              <StepButton label="+" onPress={() => apply(h + 1, m)} />
+            </View>
+            <Text style={styles.stepperColon}>:</Text>
+            <View style={styles.stepperGroup}>
+              <StepButton label="−" onPress={() => apply(h, m - 5)} />
+              <Text style={styles.stepperValue}>{String(m).padStart(2, '0')}</Text>
+              <StepButton label="+" onPress={() => apply(h, m + 5)} />
+            </View>
+          </View>
           <Pressable
-            key={opt}
-            onPress={() => onChange(opt)}
-            style={({ pressed }) => [
-              styles.chip,
-              active && styles.chipActive,
-              pressed && styles.pressed,
-            ]}
+            onPress={() => setEditing(false)}
+            style={({ pressed }) => [styles.stepperDone, pressed && styles.pressed]}
           >
-            <Text style={[styles.chipText, active && styles.chipTextActive]}>
-              {i === 0 ? `Ahora · ${opt}` : opt}
-            </Text>
+            <Text style={styles.stepperDoneText}>Listo</Text>
           </Pressable>
-        );
-      })}
-    </ScrollView>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -1144,6 +1264,52 @@ const styles = StyleSheet.create({
   chipText: { ...typography.small, color: colors.text },
   chipTextActive: { color: colors.onPrimary, fontWeight: '700' },
   timeChipRow: { flexDirection: 'row', gap: 10, paddingRight: 4 },
+
+  // --- Valor personalizado (Otro): stepper sin teclado ---
+  fieldStack: { gap: 10 },
+  stepperCard: {
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceWarm,
+  },
+  stepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  stepperDone: {
+    height: 44,
+    borderRadius: radius.button,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperDoneText: { ...typography.small, fontSize: 15, color: colors.onPrimary, fontWeight: '700' },
+  stepperGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  miniStep: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.input,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniStepText: { fontSize: 24, fontWeight: '700', color: colors.text, marginTop: -2 },
+  stepperValue: {
+    ...typography.titleMd,
+    fontSize: 22,
+    color: colors.text,
+    minWidth: 44,
+    textAlign: 'center',
+  },
+  stepperColon: { ...typography.titleMd, fontSize: 22, color: colors.text },
 
   // --- Modo: garage / trapito ---
   modeOptions: { gap: 10 },

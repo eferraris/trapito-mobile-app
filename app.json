@@ -2,6 +2,7 @@
   "expo": {
     "name": "Trapito",
     "slug": "trapito",
+    "owner": "eferraris",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -50,6 +51,11 @@
           "photosPermission": "Trapito accede a tus fotos para adjuntar una imagen del lugar donde dejaste tu auto."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6bfc4f00-b955-41f3-9d92-0b7f6a8c1766"
+      }
+    }
   }
 }
